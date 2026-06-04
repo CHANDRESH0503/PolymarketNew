@@ -236,7 +236,7 @@ function shortQ(q) {
 let eventsLoaded = false;
 async function loadEvents() {
   const sel = document.getElementById("event-select");
-  const [evs, pos] = await Promise.all([get("/api/events"), get("/api/positions")]);
+  const [evs, pos] = await Promise.all([get("/weatherbot/api/events"), get("/weatherbot/api/positions")]);
   // Show events we hold a position in first, so the panel matches our trades.
   const held = new Set(pos.map((p) => p.event_slug));
   evs.sort((a, b) => (held.has(b.slug) ? 1 : 0) - (held.has(a.slug) ? 1 : 0));
@@ -258,7 +258,7 @@ async function refreshForecast() {
   const slug = document.getElementById("event-select").value;
   if (!slug) return;
   document.getElementById("fc-stats").textContent = "loading forecast…";
-  try { drawForecast(await get("/api/forecast?event=" + encodeURIComponent(slug))); }
+  try { drawForecast(await get("/weatherbot/api/forecast?event=" + encodeURIComponent(slug))); }
   catch (e) { document.getElementById("fc-stats").innerHTML = `<span class="empty">forecast unavailable</span>`; }
 }
 
@@ -266,8 +266,8 @@ async function refreshForecast() {
 async function refresh() {
   try {
     const [s, eq, pos, fills, daily] = await Promise.all([
-      get("/api/summary"), get("/api/equity"), get("/api/positions"),
-      get("/api/fills"), get("/api/daily"),
+      get("/weatherbot/api/summary"), get("/weatherbot/api/equity"), get("/weatherbot/api/positions"),
+      get("/weatherbot/api/fills"), get("/weatherbot/api/daily"),
     ]);
     renderPlates(s);
     drawEquity(eq, s.starting_cash);
