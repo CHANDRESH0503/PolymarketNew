@@ -97,7 +97,23 @@ CREATE TABLE IF NOT EXISTS signals (
     model_prob  REAL,
     edge        REAL,
     stake       REAL,
-    taken       INTEGER
+    taken       INTEGER,
+    sleeve      TEXT,          -- 'forecast' | 'no_harvest'
+    peer        TEXT           -- smart-money stance: confirm / against / mixed / -
+);
+
+-- Coherence-arbitrage opportunities seen during a scan (Σ best-ask(YES) < 1),
+-- replaced each tick. Surfaced on the dashboard; execution is ARB_EXECUTE-gated.
+CREATE TABLE IF NOT EXISTS arb_ops (
+    ts          REAL,
+    event_slug  TEXT,
+    kind        TEXT,
+    n_buckets   INTEGER,
+    price_sum   REAL,
+    edge        REAL,          -- profit per $1 basket
+    roi_pct     REAL,
+    max_size    REAL,
+    est_profit  REAL
 );
 
 -- Forecast distributions the daemon computed, so the dashboard can render the
@@ -132,9 +148,13 @@ def _migrate(con: sqlite3.Connection) -> None:
     for col, decl in (("station", "TEXT"), ("fc_date", "TEXT"),
                       ("fc_mean", "REAL"), ("fc_std", "REAL"),
                       ("quote_price", "REAL"), ("slippage", "REAL"),
-                      ("fill_ratio", "REAL")):
+                      ("fill_ratio", "REAL"), ("sleeve", "TEXT"), ("peer", "TEXT")):
         if col not in cols:
             con.execute(f"ALTER TABLE fills ADD COLUMN {col} {decl}")
+    sig_cols = {r["name"] for r in con.execute("PRAGMA table_info(signals)")}
+    for col, decl in (("sleeve", "TEXT"), ("peer", "TEXT")):
+        if col not in sig_cols:
+            con.execute(f"ALTER TABLE signals ADD COLUMN {col} {decl}")
     con.commit()
 
 
@@ -223,6 +243,19 @@ def save_forecast_dist(con: sqlite3.Connection, station: str, date: str,
              ts=excluded.ts, payload=excluded.payload""",
         (station, date, kind, ts if ts is not None else time.time(),
          json.dumps(payload)))
+    con.commit()
+
+
+def record_arb_ops(con: sqlite3.Connection, ops: list) -> None:
+    """Replace the arb-opportunity snapshot with this scan's results."""
+    con.execute("DELETE FROM arb_ops")
+    now = time.time()
+    for o in ops:
+        con.execute(
+            "INSERT INTO arb_ops VALUES (?,?,?,?,?,?,?,?,?)",
+            (now, o.event_slug, o.kind, o.n_buckets, round(o.price_sum, 4),
+             round(o.profit_per_basket, 4), round(o.roi_pct, 2),
+             round(o.max_size, 2), round(o.est_profit, 2)))
     con.commit()
 
 

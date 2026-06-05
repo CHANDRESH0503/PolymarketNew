@@ -18,7 +18,9 @@ from .config import (ROOT, STATIONS, BANKROLL, CALIBRATION, DRY_RUN, NOWCAST,
                      CORR_KELLY, CORR_KELLY_RHO, MIN_EDGE, KELLY_FRACTION,
                      MAX_STAKE_PER_MARKET, MIN_PRICE, MAX_PRICE,
                      MIN_HOURS_TO_RESOLVE, ARB_EXECUTE, LP_EXECUTE,
-                     CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION)
+                     CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION,
+                     PEER_SIGNAL, PEER_WALLETS, NO_HARVEST, NO_HARVEST_MAX_P,
+                     NO_HARVEST_STAKE, ARB_SCAN)
 from .analysis.resolution_audit import summarize as summarize_audit
 from .paper import store
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
@@ -99,6 +101,17 @@ def signals():
     return jsonify([dict(r) for r in rows])
 
 
+@app.get("/api/arb")
+def arb():
+    """Coherence-arbitrage opportunities from the last scan (Σ best-ask(YES) < 1)."""
+    con = db()
+    rows = con.execute(
+        "SELECT * FROM arb_ops ORDER BY est_profit DESC").fetchall()
+    last = con.execute("SELECT MAX(ts) t FROM arb_ops").fetchone()
+    return jsonify({"updated": last["t"] if last else None,
+                    "ops": [dict(r) for r in rows]})
+
+
 @app.get("/api/daily")
 def daily():
     """Realized PnL grouped by settlement day + end-of-day equity."""
@@ -167,8 +180,14 @@ def status():
             "corr_kelly": CORR_KELLY,
             "depth_fills": PAPER_DEPTH,
             "arb_execute": ARB_EXECUTE,
+            "arb_scan": ARB_SCAN,
             "lp_execute": LP_EXECUTE,
+            "peer_signal": PEER_SIGNAL,
+            "no_harvest": NO_HARVEST,
         },
+        "peer_wallets": PEER_WALLETS,
+        "no_harvest_max_p": NO_HARVEST_MAX_P,
+        "no_harvest_stake": NO_HARVEST_STAKE,
         "cash_buffer": CASH_BUFFER,
         "max_day_fraction": MAX_DAY_FRACTION,
         "knobs": {
@@ -209,10 +228,11 @@ def exposure():
     con = db()
     rows = con.execute(
         "SELECT city, side, cost, shares, mark_price, edge, model_prob, pnl, "
-        "end_date FROM fills WHERE status='open'").fetchall()
+        "end_date, sleeve FROM fills WHERE status='open'").fetchall()
     by_city: dict[str, float] = defaultdict(float)
     by_day: dict[str, float] = defaultdict(float)
     by_side = {"Yes": {"n": 0, "cost": 0.0}, "No": {"n": 0, "cost": 0.0}}
+    by_sleeve: dict[str, dict] = defaultdict(lambda: {"n": 0, "cost": 0.0, "pnl": 0.0})
     deployed = value = edge_sum = 0.0
     for r in rows:
         by_city[r["city"] or "—"] += r["cost"]
@@ -220,10 +240,19 @@ def exposure():
         side = r["side"] if r["side"] in by_side else "No"
         by_side[side]["n"] += 1
         by_side[side]["cost"] += r["cost"]
+        sl = by_sleeve[r["sleeve"] or "forecast"]
+        sl["n"] += 1; sl["cost"] += r["cost"]; sl["pnl"] += r["pnl"] or 0.0
         deployed += r["cost"]
         value += r["shares"] * r["mark_price"]
         edge_sum += r["edge"] or 0.0
     n = len(rows)
+    # Realized P&L per sleeve (settled), so the low-variance no-harvest grind can
+    # be judged on its own track record vs the forecast lane.
+    realized_sleeve = {r["sleeve"] or "forecast": {"n": r["n"], "pnl": r["pnl"]}
+                       for r in con.execute(
+                           "SELECT COALESCE(sleeve,'forecast') sleeve, COUNT(*) n, "
+                           "COALESCE(SUM(pnl),0) pnl FROM fills WHERE status='settled' "
+                           "GROUP BY COALESCE(sleeve,'forecast')").fetchall()}
     # slippage / fill-quality (depth-aware fills); legacy rows may be NULL
     sl = con.execute("SELECT slippage, fill_ratio FROM fills "
                      "WHERE slippage IS NOT NULL").fetchall()
@@ -236,6 +265,10 @@ def exposure():
         "by_city": [{"city": c, "cost": round(v, 2)}
                     for c, v in sorted(by_city.items(), key=lambda x: -x[1])],
         "by_side": by_side,
+        "by_sleeve": {k: {"n": v["n"], "cost": round(v["cost"], 2),
+                          "pnl": round(v["pnl"], 2)} for k, v in by_sleeve.items()},
+        "realized_by_sleeve": {k: {"n": v["n"], "pnl": round(v["pnl"], 2)}
+                               for k, v in realized_sleeve.items()},
         "by_day": [{"day": d, "cost": round(v, 2)}
                    for d, v in sorted(by_day.items())],
         "avg_slippage": avg_slip, "avg_fill_ratio": avg_fill,

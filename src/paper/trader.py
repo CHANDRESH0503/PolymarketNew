@@ -14,11 +14,27 @@ from __future__ import annotations
 import argparse
 import time
 
-from ..config import MIN_EDGE
+from ..config import MIN_EDGE, PEER_SIGNAL, ARB_SCAN, ARB_MIN_PROFIT
 from ..polymarket.gamma import fetch_open_temperature_events, parse_event
 from ..strategy.edge import generate_signals
+from ..strategy import peer_signal, arbitrage
 from .engine import PaperBroker
 from .forecast_cache import refresh_forecast_cache, cache_scorer
+from . import store
+
+
+def _scan_arb(broker: PaperBroker, events: list[dict]) -> int:
+    """Record coherence-arb opportunities (Σ best-ask(YES) < 1) for the dashboard.
+    Detection only — real execution is ARB_EXECUTE-gated in arbitrage.py."""
+    ops = []
+    for ev in events:
+        try:
+            ops += arbitrage.scan_event(ev, min_edge=ARB_MIN_PROFIT)
+        except Exception:  # noqa: BLE001 — a flaky book must not break the tick
+            continue
+    ops.sort(key=lambda o: o.est_profit, reverse=True)
+    store.record_arb_ops(broker.con, ops)
+    return len(ops)
 
 
 def tick(broker: PaperBroker) -> None:
@@ -28,7 +44,10 @@ def tick(broker: PaperBroker) -> None:
     # Single upstream call site: fetch + persist forecasts here, then score the
     # signals from those same objects (the dashboard reads the persisted copies).
     scorers = refresh_forecast_cache(broker.con, markets)
-    signals = generate_signals(markets, scorer_for=cache_scorer(scorers))
+    peer_book = peer_signal.fetch_peer_book() if PEER_SIGNAL else None
+    signals = generate_signals(markets, scorer_for=cache_scorer(scorers),
+                               peer_book=peer_book)
+    n_arb = _scan_arb(broker, events) if ARB_SCAN else 0
 
     broker.prefetch_books([s.token_id for s in signals])   # for depth-aware fills
     taken = set()
@@ -48,9 +67,10 @@ def tick(broker: PaperBroker) -> None:
     ).fetchone()
     opens = broker.con.execute(
         "SELECT COUNT(*) c FROM fills WHERE status='open'").fetchone()["c"]
-    print(f"[{stamp}] signals={len(signals)} filled={len(taken)} open={opens} "
-          f"equity=${eq['equity']:.2f} (real ${eq['realized']:.2f} / "
-          f"unreal ${eq['unrealized']:.2f})")
+    nh = sum(1 for s in signals if s.sleeve == "no_harvest")
+    print(f"[{stamp}] signals={len(signals)} (no_harvest={nh}) filled={len(taken)} "
+          f"arb={n_arb} open={opens} equity=${eq['equity']:.2f} "
+          f"(real ${eq['realized']:.2f} / unreal ${eq['unrealized']:.2f})")
 
 
 def main() -> None:

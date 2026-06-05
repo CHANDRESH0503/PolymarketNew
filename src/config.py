@@ -62,6 +62,30 @@ NOWCAST_SAMPLES = int(_f("NOWCAST_SAMPLES", 4000))     # MC samples for the dail
 CORR_KELLY = os.getenv("CORR_KELLY", "0") == "1"       # covariance-shrink simultaneous sizing
 CORR_KELLY_RHO = _f("CORR_KELLY_RHO", 0.3)             # assumed cross-bet outcome correlation
 
+# Smart-money agreement signal. Cross-check our signals against proven weather
+# traders' live entries (matched by Polymarket token id). Advisory by default —
+# it tags each signal confirm/against and nudges size — never a blind copy.
+PEER_SIGNAL = os.getenv("PEER_SIGNAL", "0") == "1"
+# Default peer: automatedAItradingbot (0xd8f8…0f11) — trades our exact Asian
+# universe on our ~14h horizon and is currently profitable (see WALLETS.md).
+PEER_WALLETS = [w.strip() for w in os.getenv(
+    "PEER_WALLETS", "0xd8f8c13644ea84d62e1ec88c5d1215e436eb0f11").split(",") if w.strip()]
+PEER_LOOKBACK_HOURS = _f("PEER_LOOKBACK_HOURS", 36)    # how far back to read peer trades
+
+# No-favorite harvesting sleeve (low-variance lane, modeled on HondaCivic but
+# entered the day before, not at T-1h). Take No on buckets our CALIBRATED model
+# says are near-impossible (P(Yes) <= NO_HARVEST_MAX_P) yet the No price still has
+# room — small, capped tickets. Deliberately re-includes the cheap-Yes buckets the
+# normal MIN_PRICE band excludes, gated on model confidence instead.
+NO_HARVEST = os.getenv("NO_HARVEST", "0") == "1"
+NO_HARVEST_MAX_P = _f("NO_HARVEST_MAX_P", 0.03)        # max model P(Yes) to call it a "favorite No"
+NO_HARVEST_STAKE = _f("NO_HARVEST_STAKE", 25)          # hard cap per sleeve ticket (USDC)
+
+# Coherence arbitrage surfacing in the paper loop: scan events for Σ best-ask(YES)
+# < 1 baskets and record them for the dashboard. Real execution stays gated by
+# ARB_EXECUTE (live only); this just flags the opportunities.
+ARB_SCAN = os.getenv("ARB_SCAN", "1") == "1"
+
 # Wallet / CLOB
 PK = os.getenv("PK", "")
 POLY_PROXY_ADDRESS = os.getenv("POLY_PROXY_ADDRESS", "")

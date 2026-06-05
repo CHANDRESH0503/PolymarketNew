@@ -128,13 +128,14 @@ class PaperBroker:
         self.con.execute(
             """INSERT INTO fills (ts,event_slug,market_slug,question,city,condition_id,
                token_id,side,entry_price,shares,cost,model_prob,edge,end_date,status,
-               mark_price,pnl,station,fc_date,fc_mean,fc_std,quote_price,slippage,fill_ratio)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', ?, 0, ?,?,?,?,?,?,?)""",
+               mark_price,pnl,station,fc_date,fc_mean,fc_std,quote_price,slippage,fill_ratio,
+               sleeve,peer)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'open', ?, 0, ?,?,?,?,?,?,?,?,?)""",
             (time.time(), m.event_slug, m.market_slug, m.question, _city(m.question),
              m.condition_id, sig.token_id, sig.side, avg_price, shares, cost,
              sig.model_prob, sig.edge, m.end_date, avg_price,
              sig.station, sig.date, sig.fc_mean, sig.fc_std,
-             sig.price, slippage, fill_ratio))
+             sig.price, slippage, fill_ratio, sig.sleeve, sig.peer))
         store.set_meta(self.con, "cash", cash - cost)
         self.con.commit()
         return True
@@ -263,8 +264,8 @@ class PaperBroker:
         now = time.time()
         for s in signals:
             self.con.execute(
-                "INSERT INTO signals VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO signals VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (now, s.market.event_slug, s.market.question, _city(s.market.question),
                  s.side, s.price, s.model_prob, s.edge, s.stake,
-                 1 if s.token_id in taken_tokens else 0))
+                 1 if s.token_id in taken_tokens else 0, s.sleeve, s.peer))
         self.con.commit()

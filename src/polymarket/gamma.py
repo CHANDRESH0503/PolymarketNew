@@ -15,10 +15,12 @@ from ..config import GAMMA_API
 
 BucketKind = Literal["exact", "gte", "lte"]
 
-# Wunderground/ICAO station code is the last path segment of the resolution URL,
-# e.g. https://www.wunderground.com/history/daily/jp/tokyo/RJTT.  (note trailing
-# punctuation in some descriptions).
-_STATION_RE = re.compile(r"wunderground\.com/history/daily/[a-z]{2}/[\w%-]+/([A-Z]{4})")
+# Wunderground/ICAO station code is the final path segment of the resolution URL.
+# The number of intermediate segments varies: Asian cities use country/city
+# (…/jp/tokyo/RJTT) while US cities add a state (…/us/ny/new-york-city/KLGA), so
+# we match one-or-more lowercase path segments then the trailing 4-letter ICAO.
+_STATION_RE = re.compile(
+    r"wunderground\.com/history/daily/(?:[\w%-]+/)+([A-Z]{4})(?![A-Za-z0-9])")
 _TEMP_RE = re.compile(r"(-?\d+)\s*°?\s*C", re.IGNORECASE)
 
 

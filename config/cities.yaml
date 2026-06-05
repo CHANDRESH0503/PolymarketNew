@@ -22,3 +22,11 @@ stations:
   VHHH:   { name: "Hong Kong Intl",            city: "Hong Kong", lat: 22.3089, lon: 113.9145, tz: "Asia/Hong_Kong" }
   EGLL:   { name: "London Heathrow",           city: "London",    lat: 51.4706, lon: -0.4619, tz: "Europe/London" }
   EPWA:   { name: "Warsaw Chopin",             city: "Warsaw",    lat: 52.1657, lon: 20.9671, tz: "Europe/Warsaw" }
+  # NYC resolves at LaGuardia (KLGA), per the Wunderground URL
+  # (…/us/ny/new-york-city/KLGA) — one of the deepest weather books (ColdMath,
+  # Hans323 concentrate here). NOT YET TRADABLE: US markets quote in °F with
+  # 2-degree RANGE buckets ("82-83°F", "81°F or below"), not the whole-°C
+  # exact/gte/lte buckets our model assumes — needs the °F/range adapter (see
+  # README/WALLETS follow-ups) and a resolution_audit of the range rule first.
+  # Registry-ready so it works the moment that adapter lands.
+  KLGA:   { name: "New York LaGuardia",        city: "New York City", lat: 40.7769, lon: -73.8740, tz: "America/New_York" }

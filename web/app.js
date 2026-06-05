@@ -267,7 +267,7 @@ function tip() {
 }
 
 /* ---------------- System almanac ---------------- */
-function renderAlmanac(s) {
+function renderAlmanac(s, arb) {
   const chips = document.getElementById("almanac-chips");
   const strat = s.strategies || {};
   const items = [
@@ -276,6 +276,9 @@ function renderAlmanac(s) {
     ["Nowcast", "on", strat.nowcast],
     ["Corr-Kelly", "on", strat.corr_kelly],
     ["Depth Fills", "on", strat.depth_fills],
+    ["Peer Signal", "on", strat.peer_signal],
+    ["No-Harvest", "on", strat.no_harvest],
+    ["Arb Scan", "on", strat.arb_scan],
     ["Arb Exec", "on", strat.arb_execute],
     ["LP Quotes", "on", strat.lp_execute],
   ];
@@ -287,13 +290,19 @@ function renderAlmanac(s) {
     chips.appendChild(c);
   }
   const k = s.knobs || {};
+  const arbN = arb && arb.ops ? arb.ops.length : 0;
+  const arbBest = arbN ? Math.max(...arb.ops.map((o) => o.edge || 0)) : 0;
+  const arbNote = arbN
+    ? ` · <b class="pos">${arbN}</b> arb window${arbN > 1 ? "s" : ""} (best <b class="pos">${pct(arbBest, 1)}</b>)`
+    : "";
   document.getElementById("almanac-meta").innerHTML =
     `<b>${s.stations}</b> stations · <b>${s.emos_fitted}</b> EMOS-calibrated · ` +
     `models <b>${(s.models || []).map((m) => m.split("_")[0].toUpperCase()).join(" · ")}</b> · ` +
     `min-edge <b>${pct(k.min_edge, 0)}</b> · <b>${(k.kelly_fraction * 100).toFixed(0)}%</b> Kelly · ` +
     `<b>${((s.cash_buffer || 0) * 100).toFixed(0)}%</b> cash buffer · ` +
     `<b>${((s.max_day_fraction || 0) * 100).toFixed(0)}%</b> per-day cap · ` +
-    `bankroll <b>${fmtUSD(k.bankroll, false)}</b> · <b>${s.forecasts_logged}</b> forecasts logged`;
+    `bankroll <b>${fmtUSD(k.bankroll, false)}</b> · <b>${s.forecasts_logged}</b> forecasts logged` +
+    arbNote;
 }
 
 /* ---------------- Intraday nowcast (Tier 3) ---------------- */
@@ -420,6 +429,25 @@ function renderAllocation(ex) {
   };
   seg("no", "No", no.n, no.cost);
   seg("yes", "Yes", yes.n, yes.cost);
+
+  // No-harvest sleeve tracker: show the low-variance grind's open + realized P&L
+  // separately from the forecast lane. Rendered only when the sleeve has activity.
+  const nh = (ex.by_sleeve || {}).no_harvest;
+  const nhReal = (ex.realized_by_sleeve || {}).no_harvest;
+  let note = side.parentElement.querySelector(".sleeve-note");
+  if (nh || nhReal) {
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "sleeve-note";
+      note.style.cssText = "margin-top:6px;font-size:11px;opacity:.8";
+      side.parentElement.appendChild(note);
+    }
+    const openTxt = nh ? `${nh.n} open · ${fmtUSD(nh.cost, false)}` : "no open";
+    const realTxt = nhReal ? ` · realized <b class="${nhReal.pnl >= 0 ? "pos" : "neg"}">${fmtUSD(nhReal.pnl, false)}</b> (${nhReal.n})` : "";
+    note.innerHTML = `No-harvest sleeve: ${openTxt}${realTxt}`;
+  } else if (note) {
+    note.remove();
+  }
 
   // by-city horizontal bars
   const svg = document.getElementById("alloc-chart");
@@ -548,14 +576,14 @@ async function refreshForecast() {
 /* ---------------- main loop ---------------- */
 async function refresh() {
   try {
-    const [s, eq, pos, fills, daily, status, exposure, cal, audit] = await Promise.all([
+    const [s, eq, pos, fills, daily, status, exposure, cal, audit, arb] = await Promise.all([
       get("/weatherbot/api/summary"), get("/weatherbot/api/equity"), get("/weatherbot/api/positions"),
       get("/weatherbot/api/fills"), get("/weatherbot/api/daily"),
       get("/weatherbot/api/status"), get("/weatherbot/api/exposure"), get("/weatherbot/api/calibration"),
-      get("/weatherbot/api/resolution_audit"),
+      get("/weatherbot/api/resolution_audit"), get("/weatherbot/api/arb"),
     ]);
     renderPlates(s);
-    renderAlmanac(status);
+    renderAlmanac(status, arb);
     drawEquity(eq, s.starting_cash);
     renderPositions(pos);
     renderBlotter(fills);
