@@ -18,7 +18,7 @@ from .config import (ROOT, STATIONS, BANKROLL, CALIBRATION, DRY_RUN, NOWCAST,
                      CORR_KELLY, CORR_KELLY_RHO, MIN_EDGE, KELLY_FRACTION,
                      MAX_STAKE_PER_MARKET, MIN_PRICE, MAX_PRICE,
                      MIN_HOURS_TO_RESOLVE, ARB_EXECUTE, LP_EXECUTE,
-                     CASH_BUFFER, PAPER_DEPTH)
+                     CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION)
 from .analysis.resolution_audit import summarize as summarize_audit
 from .paper import store
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
@@ -173,6 +173,7 @@ def status():
             "lp_execute": LP_EXECUTE,
         },
         "cash_buffer": CASH_BUFFER,
+        "max_day_fraction": MAX_DAY_FRACTION,
         "knobs": {
             "min_edge": MIN_EDGE, "kelly_fraction": KELLY_FRACTION,
             "max_stake": MAX_STAKE_PER_MARKET, "bankroll": BANKROLL,
@@ -213,10 +214,12 @@ def exposure():
         "SELECT city, side, cost, shares, mark_price, edge, model_prob, pnl, "
         "end_date FROM fills WHERE status='open'").fetchall()
     by_city: dict[str, float] = defaultdict(float)
+    by_day: dict[str, float] = defaultdict(float)
     by_side = {"Yes": {"n": 0, "cost": 0.0}, "No": {"n": 0, "cost": 0.0}}
     deployed = value = edge_sum = 0.0
     for r in rows:
         by_city[r["city"] or "—"] += r["cost"]
+        by_day[(r["end_date"] or "")[:10] or "—"] += r["cost"]
         side = r["side"] if r["side"] in by_side else "No"
         by_side[side]["n"] += 1
         by_side[side]["cost"] += r["cost"]
@@ -236,9 +239,13 @@ def exposure():
         "by_city": [{"city": c, "cost": round(v, 2)}
                     for c, v in sorted(by_city.items(), key=lambda x: -x[1])],
         "by_side": by_side,
+        "by_day": [{"day": d, "cost": round(v, 2)}
+                   for d, v in sorted(by_day.items())],
         "avg_slippage": avg_slip, "avg_fill_ratio": avg_fill,
         "bankroll": start, "cash_buffer": CASH_BUFFER,
         "investable": round(start * (1.0 - CASH_BUFFER), 2),
+        "day_cap": round(start * MAX_DAY_FRACTION, 2),
+        "max_day_fraction": MAX_DAY_FRACTION,
         "depth_fills": PAPER_DEPTH,
     })
 

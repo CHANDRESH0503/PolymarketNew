@@ -253,12 +253,18 @@ the live book (`clob.walk_asks`): VWAP fill price, depth-capped (partial) size,
 and recorded `slippage` + `fill_ratio` per fill. Falls back to quoted-price fills
 if the book is unavailable. Toggle with `PAPER_DEPTH` (default on).
 
-**Risk — cash buffer — ✅ built**
+**Risk — cash buffer + per-day capital cap — ✅ built**
 
 `CASH_BUFFER` (default 0.10) keeps a fraction of bankroll permanently in reserve;
 the broker never spends below `CASH_BUFFER × starting_cash`, and corr-Kelly sizes
-to `BANKROLL × (1 − CASH_BUFFER)`. The dashboard's Capital Allocation gauge shows
-deployed vs the reserve ceiling.
+to `BANKROLL × (1 − CASH_BUFFER)`. `MAX_DAY_FRACTION` (default 0.50) caps how much
+capital any single *resolution day's* markets can hold — markets resolve next-day
+so cash recycles daily, and without this one day deploys the whole bankroll and
+starves the next day (which is already trading). Enforced in `engine.execute` via
+`capped_budget(stake, cash, floor, day_deployed, day_cap)` =
+`min(stake, cash−floor, day_cap−day_deployed)`. The dashboard's Capital Allocation
+panel shows the deployment gauge vs reserve ceiling **and** per-resolution-day
+deployment vs the day cap (red when over).
 
 **Further forecast quality**
 - **Whole-degree rounding bias** near .5 boundaries still to model explicitly.

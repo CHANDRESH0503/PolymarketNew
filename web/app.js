@@ -292,6 +292,7 @@ function renderAlmanac(s) {
     `models <b>${(s.models || []).map((m) => m.split("_")[0].toUpperCase()).join(" · ")}</b> · ` +
     `min-edge <b>${pct(k.min_edge, 0)}</b> · <b>${(k.kelly_fraction * 100).toFixed(0)}%</b> Kelly · ` +
     `<b>${((s.cash_buffer || 0) * 100).toFixed(0)}%</b> cash buffer · ` +
+    `<b>${((s.max_day_fraction || 0) * 100).toFixed(0)}%</b> per-day cap · ` +
     `bankroll <b>${fmtUSD(k.bankroll, false)}</b> · <b>${s.forecasts_logged}</b> forecasts logged`;
 }
 
@@ -381,6 +382,28 @@ function renderAllocation(ex) {
     `<span><b>${fmtUSD(ex.deployed, false)}</b> deployed (${depPct.toFixed(0)}%)</span>` +
     `<span class="${overBuf ? "neg" : ""}">ceiling <b>${fmtUSD(ex.investable, false)}</b> · ${((ex.cash_buffer || 0) * 100).toFixed(0)}% reserve` +
     (ex.avg_fill_ratio != null ? ` · fill ${(ex.avg_fill_ratio * 100).toFixed(0)}%` : "") + `</span>`;
+
+  // per-resolution-day deployment vs the per-day cap (the dry-powder guard)
+  const days = document.getElementById("alloc-days");
+  days.innerHTML = "";
+  const cap = ex.day_cap || 0;
+  if (cap > 0 && (ex.by_day || []).length) {
+    const label = document.createElement("div");
+    label.className = "gauge-meta";
+    label.innerHTML = `<span>By resolution day</span><span>cap <b>${fmtUSD(cap, false)}</b>/day (${((ex.max_day_fraction || 0) * 100).toFixed(0)}%)</span>`;
+    days.appendChild(label);
+    for (const d of ex.by_day) {
+      const fillPct = Math.min(100, (d.cost / cap) * 100);
+      const over = d.cost > cap + 0.5;
+      const row = document.createElement("div");
+      row.className = "alloc-day";
+      row.innerHTML =
+        `<span class="d">${d.day.slice(5)}</span>` +
+        `<span class="bar"><i class="${over ? "over" : ""}" style="width:${fillPct}%"></i></span>` +
+        `<span class="v ${over ? "neg" : ""}">${fmtUSD(d.cost, false)} · ${fillPct.toFixed(0)}%</span>`;
+      days.appendChild(row);
+    }
+  }
   // Yes/No split bar
   const side = document.getElementById("alloc-side");
   side.innerHTML = "";

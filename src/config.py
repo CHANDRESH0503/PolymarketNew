@@ -25,6 +25,10 @@ DRY_RUN = os.getenv("DRY_RUN", "1") == "1"
 # Fraction of bankroll always kept in cash (never deployed). A reserve buffer so
 # the book can't drift to 100%-invested with no dry powder.
 CASH_BUFFER = _f("CASH_BUFFER", 0.10)
+# Max fraction of bankroll committed to any single resolution-day's markets, so
+# one day can't eat the whole book and starve the next day (which is already
+# trading). Positions recycle daily, so this keeps dry powder for each new date.
+MAX_DAY_FRACTION = _f("MAX_DAY_FRACTION", 0.5)
 # Paper fills walk the live order book (depth + slippage) instead of magically
 # filling the whole size at the quoted price. Falls back to quoted-price fills if
 # the book is unavailable.

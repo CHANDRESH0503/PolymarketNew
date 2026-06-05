@@ -12,7 +12,8 @@ import time
 
 import requests
 
-from ..config import GAMMA_API, STATIONS, CASH_BUFFER, PAPER_DEPTH
+from ..config import (GAMMA_API, STATIONS, CASH_BUFFER, PAPER_DEPTH,
+                      MAX_DAY_FRACTION)
 from ..forecast.openmeteo import fetch_actual_max
 from ..forecast.metar import fetch_station_daily_max
 from ..polymarket import clob
@@ -24,6 +25,14 @@ from . import store
 def _city(question: str) -> str:
     m = re.search(r"in ([\w ]+?) be ", question)
     return m.group(1).strip() if m else ""
+
+
+def capped_budget(stake: float, cash: float, cash_floor: float,
+                  day_deployed: float, day_cap: float) -> float:
+    """USDC we may actually spend on one signal, after three independent limits:
+    the signal's own Kelly stake, the cash reserve buffer, and how much room is
+    left under this resolution-day's capital cap. Never negative."""
+    return max(0.0, min(stake, cash - cash_floor, day_cap - day_deployed))
 
 
 def _market_state(condition_id: str) -> dict | None:
@@ -65,6 +74,16 @@ class PaperBroker:
         ).fetchone()
         return row is not None
 
+    def day_deployed(self, end_date: str) -> float:
+        """USDC of open cost already committed to a resolution day (by end_date)."""
+        day = (end_date or "")[:10]
+        if not day:
+            return 0.0
+        row = self.con.execute(
+            "SELECT COALESCE(SUM(cost),0) c FROM fills "
+            "WHERE status='open' AND substr(end_date,1,10)=?", (day,)).fetchone()
+        return float(row["c"])
+
     def prefetch_books(self, token_ids: list[str]) -> None:
         """Batch-fetch the order books we're about to fill against (one call)."""
         self._books = {}
@@ -88,14 +107,16 @@ class PaperBroker:
         return round(budget / sig.price, 2), sig.price, budget
 
     def execute(self, sig: Signal) -> bool:
-        """Fill a signal — depth-aware against the live book — if we have cash
-        (above the reserve buffer) and aren't already in this token."""
+        """Fill a signal — depth-aware against the live book — subject to the cash
+        reserve and the per-resolution-day capital cap, and not already held."""
         if self.already_open(sig.token_id) or sig.stake <= 0:
             return False
         cash = store.get_meta(self.con, "cash")
         start = store.get_meta(self.con, "starting_cash")
         floor = CASH_BUFFER * start                     # never spend below the reserve
-        budget = min(sig.stake, cash - floor)
+        day_cap = MAX_DAY_FRACTION * start              # max committed to one day
+        budget = capped_budget(sig.stake, cash, floor,
+                               self.day_deployed(sig.market.end_date), day_cap)
         if budget < 1:
             return False
         shares, avg_price, cost = self._simulate_fill(sig, budget)

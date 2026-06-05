@@ -1,5 +1,6 @@
 """Tests for depth-aware fills + resolution-audit aggregation."""
 from src.polymarket.clob import walk_asks
+from src.paper.engine import capped_budget
 from src.analysis.resolution_audit import _round_half_up, summarize
 
 
@@ -77,6 +78,28 @@ def test_portfolio_sizing_respects_buffer(monkeypatch):
     total = sum(s.stake for s in sigs)
     assert total <= 900 + 1e-6        # never exceeds the buffer-adjusted bankroll
     assert all(s.stake >= 0 for s in sigs)
+
+
+def test_capped_budget_limits():
+    # stake is the binding limit when cash + day room are ample
+    assert capped_budget(50, cash=1000, cash_floor=200, day_deployed=0, day_cap=1000) == 50
+    # cash reserve binds: only 1000-900=100 spendable
+    assert capped_budget(50, cash=1000, cash_floor=900, day_deployed=0, day_cap=1000) == 50
+    assert capped_budget(500, cash=1000, cash_floor=900, day_deployed=0, day_cap=1000) == 100
+    # per-day cap binds: day already has 980 of a 1000 cap → only 20 left
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=980, day_cap=1000) == 20
+    # day full / over → zero, never negative
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=1000, day_cap=1000) == 0
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=1200, day_cap=1000) == 0
+
+
+def test_capped_budget_funds_new_day_while_old_day_full():
+    # June 5 maxed at its cap, but June 6 (day_deployed=0) still gets funded
+    start, day_cap, floor = 2000, 1000, 200
+    cash = 2000 - 1000          # June-5 took its 1000 cap
+    j6 = capped_budget(100, cash=cash, cash_floor=floor,
+                       day_deployed=0, day_cap=day_cap)
+    assert j6 == 100            # <-- the fix: a new day is no longer starved
 
 
 def test_portfolio_sizing_noop_when_off(monkeypatch):
