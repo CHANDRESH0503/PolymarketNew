@@ -10,8 +10,9 @@ zero Open-Meteo calls of its own.
 from __future__ import annotations
 
 import sqlite3
+import time
 
-from ..config import STATIONS, CALIBRATION, NOWCAST
+from ..config import STATIONS, CALIBRATION, NOWCAST, FORECAST_TTL
 from ..forecast.openmeteo import fetch_max_temp_distribution
 from ..forecast.model import apply_calibration
 from ..forecast import nowcast as nowcast_mod
@@ -37,20 +38,32 @@ def refresh_forecast_cache(con: sqlite3.Connection,
             seen.add(key)
             keys.append(key)
 
+    now = time.time()
     scorers: dict[tuple[str, str], dict] = {}
     for st, date in keys:
         s = STATIONS[st]
-        try:
-            fc = fetch_max_temp_distribution(s["lat"], s["lon"], date, s["tz"], st)
-        except Exception as e:  # noqa: BLE001 — upstream rate limit / outage
-            print(f"  ! forecast fetch failed for {st} {date}: {e}")
-            continue
-        # Persist the RAW ensemble (dashboard's Forecast panel mirrors the live
-        # endpoint, which showed the uncalibrated distribution); then calibrate
-        # the in-memory copy for scoring + the nowcast panel's ENS line.
-        store.save_forecast_dist(con, st, date, "ensemble",
-                                 dist_cache.ensemble_payload(fc))
-        apply_calibration(fc, CALIBRATION)
+        # Reuse the cached ensemble if it's still fresh (models update ~every 6h),
+        # so the daemon doesn't re-hit Open-Meteo every 15-min tick.
+        cached = store.load_forecast_dist(con, st, date, "ensemble")
+        if cached and (now - cached["ts"]) < FORECAST_TTL:
+            fc = dist_cache.ensemble_from_payload(st, date, cached, CALIBRATION)
+        else:
+            try:
+                fc = fetch_max_temp_distribution(s["lat"], s["lon"], date, s["tz"], st)
+            except Exception as e:  # noqa: BLE001 — upstream rate limit / outage
+                print(f"  ! forecast fetch failed for {st} {date}: {e}")
+                # fall back to a stale cached forecast if we have one, so a
+                # transient 429 doesn't drop the station from this tick entirely
+                if cached:
+                    fc = dist_cache.ensemble_from_payload(st, date, cached, CALIBRATION)
+                else:
+                    continue
+            else:
+                # Persist the RAW ensemble (dashboard's Forecast panel mirrors the
+                # live endpoint, which showed the uncalibrated distribution).
+                store.save_forecast_dist(con, st, date, "ensemble",
+                                         dist_cache.ensemble_payload(fc))
+                apply_calibration(fc, CALIBRATION)
 
         nc = None
         if _is_today(date, s["tz"]):

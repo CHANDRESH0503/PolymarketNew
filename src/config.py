@@ -86,6 +86,13 @@ NO_HARVEST_STAKE = _f("NO_HARVEST_STAKE", 25)          # hard cap per sleeve tic
 # ARB_EXECUTE (live only); this just flags the opportunities.
 ARB_SCAN = os.getenv("ARB_SCAN", "1") == "1"
 
+# Forecast freshness: the daemon re-fetches a station's ensemble from Open-Meteo
+# only when the cached copy is older than this. The underlying models update
+# ~every 6h, so re-pulling every 15-min tick is wasteful — a 90-min TTL keeps the
+# daemon's API footprint well under the free-tier caps while staying current.
+# (The intraday nowcast still refreshes every tick — it must fold in new obs.)
+FORECAST_TTL = _f("FORECAST_TTL", 5400)   # seconds (default 90 min)
+
 # Wallet / CLOB
 PK = os.getenv("PK", "")
 POLY_PROXY_ADDRESS = os.getenv("POLY_PROXY_ADDRESS", "")
