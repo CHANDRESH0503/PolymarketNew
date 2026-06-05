@@ -26,6 +26,14 @@
 </header>
 
 <main>
+  <!-- System almanac: what the engine is configured to do, live -->
+  <section class="almanac" id="almanac">
+    <div class="almanac-line"><span class="almanac-k">System</span>
+      <span class="almanac-chips" id="almanac-chips">—</span></div>
+    <div class="almanac-line"><span class="almanac-k">Almanac</span>
+      <span class="almanac-meta" id="almanac-meta">—</span></div>
+  </section>
+
   <!-- Summary plates -->
   <section class="plates" id="plates"></section>
 
@@ -70,6 +78,34 @@
   </div>
 
   <div class="two-col">
+    <!-- Tier 3: intraday nowcast -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Intraday Nowcast <span class="badge">Tier 3</span></h2>
+        <span class="panel-note" id="nc-event">—</span>
+      </div>
+      <div class="nc-meter-wrap" id="nc-meter-wrap">
+        <div class="nc-floor" id="nc-floor">—</div>
+        <div class="nc-meter"><div class="nc-meter-fill" id="nc-meter-fill"></div>
+          <span class="nc-meter-label" id="nc-meter-label">collapse</span></div>
+      </div>
+      <div class="chart-wrap short"><svg id="nc-chart" preserveAspectRatio="none"></svg></div>
+      <div class="legend">
+        <span><i class="sw ens"></i> Ensemble</span>
+        <span><i class="sw now"></i> Nowcast</span>
+        <span><i class="sw market"></i> Market</span>
+      </div>
+    </section>
+
+    <!-- Capital allocation / exposure -->
+    <section class="panel">
+      <div class="panel-head"><h2>Capital Allocation</h2><span class="panel-note" id="alloc-note">—</span></div>
+      <div class="alloc-side" id="alloc-side"></div>
+      <div class="chart-wrap short"><svg id="alloc-chart" preserveAspectRatio="none"></svg></div>
+    </section>
+  </div>
+
+  <div class="two-col">
     <!-- Daily PnL -->
     <section class="panel">
       <div class="panel-head"><h2>Realized P&amp;L by Day</h2><span class="panel-note">USDC</span></div>
@@ -90,6 +126,24 @@
       </div>
     </section>
   </div>
+
+  <!-- Tier 2: per-station EMOS / bias calibration -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Station Calibration <span class="badge">Tier 2 · EMOS</span></h2>
+      <span class="panel-note" id="cal-note">—</span>
+    </div>
+    <div class="table-wrap">
+      <table class="ledger" id="calibration">
+        <thead><tr>
+          <th class="l">Station</th><th class="l">City</th>
+          <th class="r">Bias °C</th><th class="r">a</th><th class="r">b</th>
+          <th class="r">c</th><th class="r">d</th><th>EMOS</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
 
   <footer class="colophon">
     Set in Fraunces &amp; IBM&nbsp;Plex&nbsp;Mono · Forecasts from GFS · ICON · ECMWF ensembles via Open-Meteo ·

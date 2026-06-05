@@ -17,8 +17,11 @@ import requests
 IEM_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
 
 
-def station_daily_max(icao: str, start: str, end: str, tz: str) -> dict[str, float]:
-    """Map local-date -> max observed temperature (°C) over [start, end]."""
+def _fetch_rows(icao: str, start: str, end: str, tz: str) -> list[tuple[str, float]]:
+    """Raw (local_timestamp, tmpc) observations over [start, end] from IEM ASOS.
+
+    Timestamps are 'YYYY-MM-DD HH:MM' in the station's local tz; only rows with a
+    parseable temperature are returned."""
     d2 = dt.date.fromisoformat(end) + dt.timedelta(days=1)   # IEM end is exclusive-ish
     d1 = dt.date.fromisoformat(start)
     params = {
@@ -32,17 +35,25 @@ def station_daily_max(icao: str, start: str, end: str, tz: str) -> dict[str, flo
         r.raise_for_status()
         lines = r.text.splitlines()
     except Exception:  # noqa: BLE001
-        return {}
-    out: dict[str, float] = {}
+        return []
+    rows: list[tuple[str, float]] = []
     for line in lines[1:]:                      # skip header
         parts = line.split(",")
         if len(parts) < 3:
             continue
-        day = parts[1][:10]                     # 'YYYY-MM-DD HH:MM' (local)
+        ts = parts[1]                           # 'YYYY-MM-DD HH:MM' (local)
         try:
-            t = float(parts[2])
+            rows.append((ts, float(parts[2])))
         except ValueError:
             continue
+    return rows
+
+
+def station_daily_max(icao: str, start: str, end: str, tz: str) -> dict[str, float]:
+    """Map local-date -> max observed temperature (°C) over [start, end]."""
+    out: dict[str, float] = {}
+    for ts, t in _fetch_rows(icao, start, end, tz):
+        day = ts[:10]
         if start <= day <= end:
             out[day] = max(out.get(day, -1e9), t)
     return out
@@ -51,3 +62,21 @@ def station_daily_max(icao: str, start: str, end: str, tz: str) -> dict[str, flo
 def fetch_station_daily_max(icao: str, date: str, tz: str) -> float | None:
     """Actual recorded daily max for one station/date (resolution-aligned)."""
     return station_daily_max(icao, date, date, tz).get(date)
+
+
+def station_obs_today(icao: str, date: str, tz: str
+                      ) -> tuple[float | None, str | None, int]:
+    """Intraday snapshot of `date` *so far*: (running_max_c, latest_ob_ts, n_obs).
+
+    This is the Tier-3 nowcasting input — the same station observations that will
+    ultimately resolve the market, read live. The running max is a HARD floor on
+    the day's high: the daily max can only equal or exceed what's already been
+    observed. Returns (None, None, 0) if no obs exist yet for the date.
+    """
+    day_rows = [(ts, t) for ts, t in _fetch_rows(icao, date, date, tz)
+                if ts[:10] == date]
+    if not day_rows:
+        return None, None, 0
+    running_max = max(t for _, t in day_rows)
+    latest = max(ts for ts, _ in day_rows)
+    return running_max, latest, len(day_rows)

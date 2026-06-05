@@ -113,6 +113,45 @@ def _ensure_meta(con: sqlite3.Connection) -> None:
         con.commit()
 
 
+def backfill_fill_metadata(con: sqlite3.Connection) -> int:
+    """Self-heal fills written before forecast metadata was recorded (or by a
+    stale deploy). Recoverable from data we still have:
+
+      station  <- fills.city mapped through the station registry
+      fc_date  <- end_date[:10]
+      fc_mean/fc_std <- joined from the `forecasts` table on (station, date)
+
+    Idempotent: only touches rows where the target column is NULL. Returns the
+    number of fills updated."""
+    from ..config import STATIONS
+    city_to_code = {s["city"]: code for code, s in STATIONS.items()}
+
+    updated = 0
+    rows = con.execute(
+        "SELECT id, city, end_date, station, fc_date FROM fills "
+        "WHERE station IS NULL OR fc_date IS NULL").fetchall()
+    for r in rows:
+        station = r["station"] or city_to_code.get((r["city"] or "").strip())
+        fc_date = r["fc_date"] or ((r["end_date"] or "")[:10] or None)
+        if station == r["station"] and fc_date == r["fc_date"]:
+            continue
+        con.execute("UPDATE fills SET station=?, fc_date=? WHERE id=?",
+                    (station, fc_date, r["id"]))
+        updated += 1
+
+    # Fill forecast mean/std from the logged forecasts dataset where available.
+    con.execute(
+        """UPDATE fills SET
+             fc_mean = COALESCE(fc_mean, (SELECT mean FROM forecasts f
+                        WHERE f.station=fills.station AND f.date=fills.fc_date)),
+             fc_std  = COALESCE(fc_std,  (SELECT std  FROM forecasts f
+                        WHERE f.station=fills.station AND f.date=fills.fc_date))
+           WHERE (fc_mean IS NULL OR fc_std IS NULL)
+             AND station IS NOT NULL AND fc_date IS NOT NULL""")
+    con.commit()
+    return updated
+
+
 def get_meta(con: sqlite3.Connection, key: str, default: float = 0.0) -> float:
     row = con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
     return float(row["value"]) if row else default

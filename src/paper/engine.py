@@ -52,6 +52,9 @@ def _market_state(condition_id: str) -> dict | None:
 class PaperBroker:
     def __init__(self):
         self.con = store.connect()
+        healed = store.backfill_fill_metadata(self.con)
+        if healed:
+            print(f"  backfilled forecast metadata on {healed} legacy fill(s)")
 
     # ---- execution --------------------------------------------------------
     def already_open(self, token_id: str) -> bool:
@@ -91,8 +94,9 @@ class PaperBroker:
             """INSERT INTO forecasts (station,date,ts_logged,mean,std,n_members)
                VALUES (?,?,?,?,?,?)
                ON CONFLICT(station,date) DO UPDATE SET mean=excluded.mean,
-               std=excluded.std, ts_logged=excluded.ts_logged""",
-            (sig.station, sig.date, time.time(), sig.fc_mean, sig.fc_std, 0))
+               std=excluded.std, ts_logged=excluded.ts_logged,
+               n_members=excluded.n_members""",
+            (sig.station, sig.date, time.time(), sig.fc_mean, sig.fc_std, sig.fc_n))
         self.con.commit()
 
     # ---- marking & settlement --------------------------------------------

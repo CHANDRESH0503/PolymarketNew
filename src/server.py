@@ -14,11 +14,15 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from .config import ROOT, STATIONS, BANKROLL
+from .config import (ROOT, STATIONS, BANKROLL, CALIBRATION, DRY_RUN, NOWCAST,
+                     CORR_KELLY, CORR_KELLY_RHO, MIN_EDGE, KELLY_FRACTION,
+                     MAX_STAKE_PER_MARKET, MIN_PRICE, MAX_PRICE,
+                     MIN_HOURS_TO_RESOLVE, ARB_EXECUTE, LP_EXECUTE)
 from .paper import store
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
-from .forecast.openmeteo import fetch_max_temp_distribution
-from .forecast.model import yes_probability
+from .forecast.openmeteo import fetch_max_temp_distribution, MODELS
+from .forecast.model import yes_probability, apply_calibration
+from .forecast import nowcast as nowcast_mod
 
 WEB = ROOT / "web"
 app = Flask(__name__, static_folder=None)
@@ -147,6 +151,134 @@ def forecast():
     return jsonify({"event": slug, "city": s["city"], "station": station,
                     "date": date, "mean": fc["mean"], "std": fc["std"],
                     "members": fc["members"], "buckets": buckets})
+
+
+@app.get("/api/status")
+def status():
+    """What the system is configured to do right now — feature flags + knobs.
+    Drives the dashboard's 'System Almanac' strip so it reflects the live build."""
+    con = db()
+    n_fc = con.execute("SELECT COUNT(*) c FROM forecasts").fetchone()["c"]
+    n_emos = sum(1 for v in CALIBRATION.values() if v.get("emos"))
+    return jsonify({
+        "dry_run": DRY_RUN,
+        "strategies": {
+            "forecast_edge": True,
+            "nowcast": NOWCAST,
+            "corr_kelly": CORR_KELLY,
+            "arb_execute": ARB_EXECUTE,
+            "lp_execute": LP_EXECUTE,
+        },
+        "knobs": {
+            "min_edge": MIN_EDGE, "kelly_fraction": KELLY_FRACTION,
+            "max_stake": MAX_STAKE_PER_MARKET, "bankroll": BANKROLL,
+            "min_price": MIN_PRICE, "max_price": MAX_PRICE,
+            "min_hours_to_resolve": MIN_HOURS_TO_RESOLVE,
+            "corr_rho": CORR_KELLY_RHO,
+        },
+        "models": MODELS.split(","),
+        "stations": len(STATIONS),
+        "calibrated": len(CALIBRATION),
+        "emos_fitted": n_emos,
+        "forecasts_logged": n_fc,
+    })
+
+
+@app.get("/api/calibration")
+def calibration():
+    """Tier-2 EMOS/NGR + bias calibration per station (μ=a+b·mean, σ²=c+d·var)."""
+    out = []
+    for code, cal in sorted(CALIBRATION.items()):
+        s = STATIONS.get(code, {})
+        e = cal.get("emos") or {}
+        out.append({
+            "station": code, "city": s.get("city", code),
+            "bias": cal.get("bias"), "sigma": cal.get("sigma"),
+            "emos": bool(e),
+            "a": e.get("a"), "b": e.get("b"), "c": e.get("c"), "d": e.get("d"),
+        })
+    return jsonify(out)
+
+
+@app.get("/api/exposure")
+def exposure():
+    """Live breakdown of open capital: by city, by side (Yes/No longshot mix),
+    and the edge/horizon profile — i.e. what the book currently looks like."""
+    con = db()
+    rows = con.execute(
+        "SELECT city, side, cost, shares, mark_price, edge, model_prob, pnl, "
+        "end_date FROM fills WHERE status='open'").fetchall()
+    by_city: dict[str, float] = defaultdict(float)
+    by_side = {"Yes": {"n": 0, "cost": 0.0}, "No": {"n": 0, "cost": 0.0}}
+    deployed = value = edge_sum = 0.0
+    for r in rows:
+        by_city[r["city"] or "—"] += r["cost"]
+        side = r["side"] if r["side"] in by_side else "No"
+        by_side[side]["n"] += 1
+        by_side[side]["cost"] += r["cost"]
+        deployed += r["cost"]
+        value += r["shares"] * r["mark_price"]
+        edge_sum += r["edge"] or 0.0
+    n = len(rows)
+    return jsonify({
+        "n": n, "deployed": round(deployed, 2), "value": round(value, 2),
+        "avg_edge": (edge_sum / n) if n else None,
+        "by_city": [{"city": c, "cost": round(v, 2)}
+                    for c, v in sorted(by_city.items(), key=lambda x: -x[1])],
+        "by_side": by_side,
+    })
+
+
+_nc_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+@app.get("/api/nowcast")
+def nowcast():
+    """Tier-3 intraday nowcast for one event: observed station floor + remaining
+    hours, with the collapse meter and ENS-vs-NOW-vs-MKT bucket probabilities."""
+    slug = request.args.get("event", "")
+    events_ = fetch_open_temperature_events()
+    ev = next((e for e in events_ if e.get("slug") == slug), None)
+    if ev is None:
+        return jsonify({"error": "event not found"}), 404
+    markets = parse_event(ev)
+    station = next((m.station_code for m in markets if m.station_code in STATIONS), None)
+    if not station:
+        return jsonify({"error": "unknown station"}), 404
+    date = markets[0].end_date[:10]
+    key = (station, date)
+    now = time.time()
+    if key in _nc_cache and now - _nc_cache[key][0] < 300:
+        nc, fc = _nc_cache[key][1]["_nc"], _nc_cache[key][1]["_fc"]
+    else:
+        try:
+            nc = nowcast_mod.build_nowcast(station, date)
+        except Exception as e:  # noqa: BLE001
+            return jsonify({"error": f"nowcast failed: {e}"}), 502
+        s = STATIONS[station]
+        try:
+            fc = apply_calibration(fetch_max_temp_distribution(
+                s["lat"], s["lon"], date, s["tz"], station), CALIBRATION)
+        except Exception:  # noqa: BLE001
+            fc = None
+        _nc_cache[key] = (now, {"_nc": nc, "_fc": fc})
+
+    buckets = []
+    for m in sorted(markets, key=lambda x: x.threshold_c):
+        buckets.append({
+            "label": f"{m.threshold_c}°", "kind": m.bucket_kind, "degree": m.threshold_c,
+            "now": nowcast_mod.yes_probability(nc, m.bucket_kind, m.threshold_c),
+            "ens": (yes_probability(fc, m.bucket_kind, m.threshold_c)
+                    if fc is not None else None),
+            "market": m.yes_price,
+        })
+    s = STATIONS[station]
+    return jsonify({
+        "event": slug, "city": s["city"], "station": station, "date": date,
+        "observed_max": nc.observed_max_c, "latest_ob": nc.latest_ob,
+        "remaining_hours": nc.n_remaining_hours, "floor_locked": nc.floor_locked,
+        "mean": nc.mean, "std": nc.std, "buckets": buckets,
+    })
 
 
 @app.get("/api/events")

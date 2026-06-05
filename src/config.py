@@ -39,6 +39,17 @@ LP_EXECUTE = os.getenv("LP_EXECUTE", "0") == "1"
 LP_SIZE = _f("LP_SIZE", 50)                        # shares per maker quote
 LP_EVENTS = os.getenv("LP_EVENTS", "")             # comma-sep slugs; blank = held
 
+# Tier 3 — intraday nowcasting. When on, same-day markets are scored from a
+# nowcast that folds the running observed station max (the resolution source) in
+# as a hard floor and only forecasts the remaining hours, sharpening as the
+# afternoon peak passes. Off by default (it's the unproven "is the market slow?"
+# alpha hunt; ensemble-only is the safe baseline).
+NOWCAST = os.getenv("NOWCAST", "0") == "1"
+NOWCAST_RESID_SIGMA = _f("NOWCAST_RESID_SIGMA", 0.6)   # °C residual on remaining-hours max
+NOWCAST_SAMPLES = int(_f("NOWCAST_SAMPLES", 4000))     # MC samples for the daily-max dist
+CORR_KELLY = os.getenv("CORR_KELLY", "0") == "1"       # covariance-shrink simultaneous sizing
+CORR_KELLY_RHO = _f("CORR_KELLY_RHO", 0.3)             # assumed cross-bet outcome correlation
+
 # Wallet / CLOB
 PK = os.getenv("PK", "")
 POLY_PROXY_ADDRESS = os.getenv("POLY_PROXY_ADDRESS", "")

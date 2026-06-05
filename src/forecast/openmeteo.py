@@ -40,13 +40,15 @@ class MaxTempForecast:
         return float(self.members_max_c.std(ddof=1))
 
 
-def fetch_max_temp_distribution(lat: float, lon: float, date: str,
-                                tz: str, station_code: str = "",
-                                models: str = MODELS) -> MaxTempForecast:
-    """Return the distribution of the daily maximum 2m temperature for `date`.
+def fetch_hourly_members(lat: float, lon: float, date: str, tz: str,
+                         models: str = MODELS) -> tuple[list[str], dict[str, np.ndarray]]:
+    """Raw per-member hourly 2m-temperature series for `date` (local tz).
 
-    We request hourly temps for all ensemble members, then take, per member,
-    the max over the local-day's hours.
+    Returns (times, members) where `times` are local 'YYYY-MM-DDTHH:MM' strings
+    and `members` maps each member key to a float array (NaN for missing hours),
+    aligned to `times`. This is the building block for both the full-day max
+    distribution and the Tier-3 intraday nowcaster (which needs to split the day
+    into observed-so-far vs remaining hours).
     """
     r = requests.get(
         ENSEMBLE_URL,
@@ -61,14 +63,30 @@ def fetch_max_temp_distribution(lat: float, lon: float, date: str,
     )
     r.raise_for_status()
     hourly = r.json()["hourly"]
-
+    times = list(hourly["time"])
     # Every member series is keyed temperature_2m, temperature_2m_member01, ...
     member_keys = [k for k in hourly if k.startswith("temperature_2m")]
+    members = {
+        k: np.array([np.nan if v is None else v for v in hourly[k]], dtype=float)
+        for k in member_keys
+    }
+    return times, members
+
+
+def fetch_max_temp_distribution(lat: float, lon: float, date: str,
+                                tz: str, station_code: str = "",
+                                models: str = MODELS) -> MaxTempForecast:
+    """Return the distribution of the daily maximum 2m temperature for `date`.
+
+    We request hourly temps for all ensemble members, then take, per member,
+    the max over the local-day's hours.
+    """
+    _, members = fetch_hourly_members(lat, lon, date, tz, models)
     maxes = []
-    for k in member_keys:
-        arr = np.array([v for v in hourly[k] if v is not None], dtype=float)
-        if arr.size:
-            maxes.append(arr.max())
+    for arr in members.values():
+        a = arr[~np.isnan(arr)]
+        if a.size:
+            maxes.append(a.max())
     members_max = np.array(maxes, dtype=float)
     if members_max.size == 0:
         raise RuntimeError(f"No ensemble data returned for {station_code} {date}")

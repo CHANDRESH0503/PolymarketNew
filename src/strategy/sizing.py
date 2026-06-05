@@ -2,7 +2,10 @@
 that pays 1 if it resolves Yes."""
 from __future__ import annotations
 
-from ..config import KELLY_FRACTION, MAX_STAKE_PER_MARKET, BANKROLL
+import numpy as np
+
+from ..config import (BANKROLL, CORR_KELLY_RHO, KELLY_FRACTION,
+                      MAX_STAKE_PER_MARKET)
 
 
 def kelly_fraction(p: float, price: float) -> float:
@@ -24,3 +27,59 @@ def stake_usdc(p: float, price: float,
                cap: float = MAX_STAKE_PER_MARKET) -> float:
     f = kelly_fraction(p, price) * fraction
     return round(min(f * bankroll, cap), 2)
+
+
+# --- Tier 3: correlation-aware (simultaneous) Kelly -------------------------
+# Independent single-bet Kelly over-bets when the outcomes are correlated — one
+# heat wave pushes many cities the same way, so several "Yes/No" bets win or lose
+# together, inflating variance. The continuous (log-normal) approximation of
+# simultaneous Kelly maximises E[log wealth] with f* = Σ⁻¹ μ, where μ is the
+# vector of expected per-dollar returns and Σ their covariance. Positive
+# correlation in Σ shrinks the correlated legs — pure downside protection.
+
+def correlation_kelly(probs, prices, corr=None,
+                      rho: float = CORR_KELLY_RHO) -> np.ndarray:
+    """Full-Kelly bankroll fractions for a set of simultaneous binary bets.
+
+    `probs[i]`  = our win probability for buying leg i at `prices[i]`.
+    `corr`      = NxN correlation matrix of the legs' outcomes; if None, an
+                  equicorrelation matrix with off-diagonal `rho` is used.
+    Returns f*[i] >= 0 (no shorting; negative/no-edge legs clamp to 0). Apply
+    KELLY_FRACTION and per-market caps separately (see `correlated_stakes`)."""
+    p = np.asarray(probs, dtype=float)
+    q = np.asarray(prices, dtype=float)
+    n = p.size
+    if n == 0:
+        return np.zeros(0)
+
+    # Per-dollar return of buying leg i: pays (1/q - 1) on win, -1 on loss.
+    mu = (p - q) / q                       # expected return = edge / price
+    sigma = np.sqrt(np.clip(p * (1.0 - p), 0.0, None)) / q   # Bernoulli std, scaled
+
+    if corr is None:
+        corr = np.full((n, n), float(rho))
+        np.fill_diagonal(corr, 1.0)
+    else:
+        corr = np.asarray(corr, dtype=float)
+
+    cov = corr * np.outer(sigma, sigma)
+    cov += np.eye(n) * 1e-9                 # ridge for invertibility
+    try:
+        f = np.linalg.solve(cov, mu)
+    except np.linalg.LinAlgError:
+        f = mu / np.diag(cov)              # fall back to independent Kelly
+    return np.clip(f, 0.0, None)
+
+
+def correlated_stakes(probs, prices, corr=None,
+                      bankroll: float = BANKROLL,
+                      fraction: float = KELLY_FRACTION,
+                      cap: float = MAX_STAKE_PER_MARKET,
+                      rho: float = CORR_KELLY_RHO) -> list[float]:
+    """USDC stakes for simultaneous correlated bets: fractional, covariance-shrunk
+    Kelly, with a total-bankroll guard and per-market cap."""
+    f = correlation_kelly(probs, prices, corr, rho) * fraction
+    total = f.sum()
+    if total > 1.0:                        # never stake more than the bankroll
+        f = f / total
+    return [round(min(fi * bankroll, cap), 2) for fi in f]
