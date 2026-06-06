@@ -11,8 +11,17 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 
+def _clean(key: str, default: str) -> str:
+    """Return env var value with inline shell comments stripped."""
+    return os.getenv(key, default).split("#")[0].strip()
+
+
 def _f(key: str, default: float) -> float:
-    return float(os.getenv(key, default))
+    return float(_clean(key, str(default)))
+
+
+def _b(key: str, default: str) -> bool:
+    return _clean(key, default) == "1"
 
 
 # Strategy knobs
@@ -20,7 +29,7 @@ MIN_EDGE = _f("MIN_EDGE", 0.07)
 KELLY_FRACTION = _f("KELLY_FRACTION", 0.25)
 MAX_STAKE_PER_MARKET = _f("MAX_STAKE_PER_MARKET", 100)
 BANKROLL = _f("BANKROLL", 2000)
-DRY_RUN = os.getenv("DRY_RUN", "1") == "1"
+DRY_RUN = _b("DRY_RUN", "1")
 
 # Fraction of bankroll always kept in cash (never deployed). A reserve buffer so
 # the book can't drift to 100%-invested with no dry powder.
@@ -32,7 +41,7 @@ MAX_DAY_FRACTION = _f("MAX_DAY_FRACTION", 0.5)
 # Paper fills walk the live order book (depth + slippage) instead of magically
 # filling the whole size at the quoted price. Falls back to quoted-price fills if
 # the book is unavailable.
-PAPER_DEPTH = os.getenv("PAPER_DEPTH", "1") == "1"
+PAPER_DEPTH = _b("PAPER_DEPTH", "1")
 
 # Tradability filters. Markets within a few hours of resolution are effectively
 # decided (prices pinned to 0.001/0.999, no liquidity), so forecast "edge" there
@@ -44,31 +53,31 @@ MIN_HOURS_TO_RESOLVE = _f("MIN_HOURS_TO_RESOLVE", 8)
 # Auto-execution gates. Each is an EXTRA opt-in on top of DRY_RUN+PK: even with
 # DRY_RUN=0 and a funded wallet, the arb / LP bots only send orders when their
 # own flag is set. Default off.
-ARB_EXECUTE = os.getenv("ARB_EXECUTE", "0") == "1"
+ARB_EXECUTE = _b("ARB_EXECUTE", "0")
 ARB_MIN_PROFIT = _f("ARB_MIN_PROFIT", 0.02)        # min basket edge to act on
 ARB_MAX_CAPITAL = _f("ARB_MAX_CAPITAL", 200)       # max USDC deployed per basket
-LP_EXECUTE = os.getenv("LP_EXECUTE", "0") == "1"
+LP_EXECUTE = _b("LP_EXECUTE", "0")
 LP_SIZE = _f("LP_SIZE", 50)                        # shares per maker quote
-LP_EVENTS = os.getenv("LP_EVENTS", "")             # comma-sep slugs; blank = held
+LP_EVENTS = _clean("LP_EVENTS", "")
 
 # Tier 3 — intraday nowcasting. When on, same-day markets are scored from a
 # nowcast that folds the running observed station max (the resolution source) in
 # as a hard floor and only forecasts the remaining hours, sharpening as the
 # afternoon peak passes. Off by default (it's the unproven "is the market slow?"
 # alpha hunt; ensemble-only is the safe baseline).
-NOWCAST = os.getenv("NOWCAST", "0") == "1"
+NOWCAST = _b("NOWCAST", "0")
 NOWCAST_RESID_SIGMA = _f("NOWCAST_RESID_SIGMA", 0.6)   # °C residual on remaining-hours max
 NOWCAST_SAMPLES = int(_f("NOWCAST_SAMPLES", 4000))     # MC samples for the daily-max dist
-CORR_KELLY = os.getenv("CORR_KELLY", "0") == "1"       # covariance-shrink simultaneous sizing
+CORR_KELLY = _b("CORR_KELLY", "0")
 CORR_KELLY_RHO = _f("CORR_KELLY_RHO", 0.3)             # assumed cross-bet outcome correlation
 
 # Smart-money agreement signal. Cross-check our signals against proven weather
 # traders' live entries (matched by Polymarket token id). Advisory by default —
 # it tags each signal confirm/against and nudges size — never a blind copy.
-PEER_SIGNAL = os.getenv("PEER_SIGNAL", "0") == "1"
+PEER_SIGNAL = _b("PEER_SIGNAL", "0")
 # Default peer: automatedAItradingbot (0xd8f8…0f11) — trades our exact Asian
 # universe on our ~14h horizon and is currently profitable (see WALLETS.md).
-PEER_WALLETS = [w.strip() for w in os.getenv(
+PEER_WALLETS = [w.strip() for w in _clean(
     "PEER_WALLETS", "0xd8f8c13644ea84d62e1ec88c5d1215e436eb0f11").split(",") if w.strip()]
 PEER_LOOKBACK_HOURS = _f("PEER_LOOKBACK_HOURS", 36)    # how far back to read peer trades
 
@@ -77,14 +86,14 @@ PEER_LOOKBACK_HOURS = _f("PEER_LOOKBACK_HOURS", 36)    # how far back to read pe
 # says are near-impossible (P(Yes) <= NO_HARVEST_MAX_P) yet the No price still has
 # room — small, capped tickets. Deliberately re-includes the cheap-Yes buckets the
 # normal MIN_PRICE band excludes, gated on model confidence instead.
-NO_HARVEST = os.getenv("NO_HARVEST", "0") == "1"
+NO_HARVEST = _b("NO_HARVEST", "0")
 NO_HARVEST_MAX_P = _f("NO_HARVEST_MAX_P", 0.03)        # max model P(Yes) to call it a "favorite No"
 NO_HARVEST_STAKE = _f("NO_HARVEST_STAKE", 25)          # hard cap per sleeve ticket (USDC)
 
 # Coherence arbitrage surfacing in the paper loop: scan events for Σ best-ask(YES)
 # < 1 baskets and record them for the dashboard. Real execution stays gated by
 # ARB_EXECUTE (live only); this just flags the opportunities.
-ARB_SCAN = os.getenv("ARB_SCAN", "1") == "1"
+ARB_SCAN = _b("ARB_SCAN", "1")
 
 # Forecast freshness: the daemon re-fetches a station's ensemble from Open-Meteo
 # only when the cached copy is older than this. The underlying models update
