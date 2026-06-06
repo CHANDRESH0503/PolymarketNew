@@ -134,8 +134,12 @@ function renderPositions(rows) {
     const slip = r.slippage == null ? "—" :
       `<span class="${r.slippage > 0 ? "neg" : r.slippage < 0 ? "pos" : ""}">${r.slippage > 0 ? "+" : ""}${(r.slippage * 100).toFixed(1)}¢</span>`;
     const tr = document.createElement("tr");
+    const mktUrl = r.event_slug ? `https://polymarket.com/event/${encodeURIComponent(r.event_slug)}` : null;
+    const mktCell = mktUrl
+      ? `<a href="${mktUrl}" target="_blank" rel="noopener" class="mkt-link" title="${r.question}">${shortQ(r.question)}</a>`
+      : `<span title="${r.question}">${shortQ(r.question)}</span>`;
     tr.innerHTML = `
-      <td class="l mkt" title="${r.question}">${shortQ(r.question)}</td>
+      <td class="l mkt">${mktCell}</td>
       <td class="l">${r.city}</td>
       <td><span class="tag ${r.side.toLowerCase()}">${r.side}</span></td>
       <td class="r">${r.entry_price.toFixed(3)}</td>

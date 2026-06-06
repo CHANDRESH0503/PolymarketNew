@@ -122,6 +122,8 @@ svg{width:100%;height:100%;overflow:visible;display:block}
 .ledger td.l{color:var(--ink)}
 .ledger tr:hover td{background:#f4efe0}
 .ledger .mkt{max-width:230px;overflow:hidden;text-overflow:ellipsis}
+a.mkt-link{color:var(--ink);text-decoration:none;border-bottom:1px dashed var(--muted)}
+a.mkt-link:hover{color:var(--brass);border-bottom-color:var(--brass)}
 .tag{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;
   border:1px solid currentColor;border-radius:2px}
 .tag.yes{color:var(--gain)} .tag.no{color:var(--loss)}
