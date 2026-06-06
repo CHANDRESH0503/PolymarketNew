@@ -6,12 +6,36 @@ bucket (exact / at-or-above / at-or-below) plus the resolution station.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 import requests
 
 from ..config import GAMMA_API
+
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _gamma_get(url: str, params: dict, *, timeout: int = 20,
+               retries: int = 4, backoff: float = 2.0) -> requests.Response:
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+            if r.status_code in _RETRY_STATUS and attempt < retries - 1:
+                wait = float(r.headers.get("Retry-After") or backoff * (2 ** attempt))
+                time.sleep(min(wait, 30.0))
+                continue
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt < retries - 1:
+                time.sleep(backoff * (2 ** attempt))
+                continue
+            raise
+    raise last_exc  # type: ignore[misc]
 
 BucketKind = Literal["exact", "gte", "lte"]
 
@@ -67,14 +91,12 @@ def fetch_open_temperature_events(limit: int = 300) -> list[dict]:
     """
     out, offset = [], 0
     while offset < limit * 3:
-        r = requests.get(
+        r = _gamma_get(
             f"{GAMMA_API}/events",
             params={"closed": "false", "tag_id": WEATHER_TAG_ID,
                     "limit": 100, "offset": offset,
                     "order": "startDate", "ascending": "false"},
-            timeout=20,
         )
-        r.raise_for_status()
         batch = r.json()
         if not batch:
             break

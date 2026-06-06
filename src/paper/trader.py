@@ -45,7 +45,14 @@ def tick(broker: PaperBroker) -> None:
     # Single upstream call site: fetch + persist forecasts here, then score the
     # signals from those same objects (the dashboard reads the persisted copies).
     scorers = refresh_forecast_cache(broker.con, markets)
-    peer_book = peer_signal.fetch_peer_book() if PEER_SIGNAL else None
+
+    peer_book = None
+    if PEER_SIGNAL:
+        try:
+            peer_book = peer_signal.fetch_peer_book()
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! peer signal fetch failed ({e}); continuing without it")
+
     signals = generate_signals(markets, scorer_for=cache_scorer(scorers),
                                peer_book=peer_book)
     n_arb = _scan_arb(broker, events) if ARB_SCAN else 0
@@ -59,9 +66,13 @@ def tick(broker: PaperBroker) -> None:
             print(f"  FILLED {s}")
     broker.record_signals(signals, taken)
     broker.mark_and_settle()
-    filled_actuals = broker.backfill_actuals()
-    if filled_actuals:
-        print(f"  backfilled {filled_actuals} actual max-temp(s)")
+
+    try:
+        filled_actuals = broker.backfill_actuals()
+        if filled_actuals:
+            print(f"  backfilled {filled_actuals} actual max-temp(s)")
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! backfill_actuals failed ({e}); skipping this tick")
 
     eq = broker.con.execute(
         "SELECT equity, realized, unrealized FROM equity ORDER BY ts DESC LIMIT 1"
