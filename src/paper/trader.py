@@ -95,7 +95,6 @@ def main() -> None:
         return
     consecutive_errors = 0
     while True:
-        broker.snapshot()          # heartbeat: equity/marks persist even if tick errors
         try:
             tick(broker)
             if consecutive_errors:
@@ -105,6 +104,7 @@ def main() -> None:
             consecutive_errors += 1
             print(f"tick error #{consecutive_errors}: {e}")
             notify.notify_tick_error(e, consecutive_errors)
+            broker.snapshot()      # heartbeat only on failure: keeps chart alive without doubling points
         time.sleep(args.loop)
 
 
