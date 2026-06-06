@@ -13,7 +13,7 @@ import time
 import requests
 
 from ..config import (GAMMA_API, STATIONS, CASH_BUFFER, PAPER_DEPTH,
-                      MAX_DAY_FRACTION)
+                      MAX_DAY_FRACTION, EQUITY_SNAPSHOT_INTERVAL)
 from ..forecast.openmeteo import fetch_actual_max
 from ..forecast.metar import fetch_station_daily_max
 from ..polymarket import clob
@@ -242,7 +242,15 @@ class PaperBroker:
         self.con.commit()
         return n
 
-    def snapshot(self) -> None:
+    def snapshot(self, force: bool = False) -> None:
+        # Throttle equity-curve points: the trader may tick more often than
+        # EQUITY_SNAPSHOT_INTERVAL, but we only add a new point once per interval
+        # so the dashboard chart updates every ~10 min, not every short tick.
+        if not force and EQUITY_SNAPSHOT_INTERVAL > 0:
+            last = self.con.execute(
+                "SELECT ts FROM equity ORDER BY ts DESC LIMIT 1").fetchone()
+            if last and (time.time() - last["ts"]) < EQUITY_SNAPSHOT_INTERVAL:
+                return
         cash = store.get_meta(self.con, "cash")
         start = store.get_meta(self.con, "starting_cash")
         opens = self.con.execute(

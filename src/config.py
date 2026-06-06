@@ -42,6 +42,11 @@ MAX_DAY_FRACTION = _f("MAX_DAY_FRACTION", 0.5)
 # filling the whole size at the quoted price. Falls back to quoted-price fills if
 # the book is unavailable.
 PAPER_DEPTH = _b("PAPER_DEPTH", "1")
+# Minimum spacing (seconds) between equity-curve points. The trader may tick more
+# often than this (to fill/mark/settle promptly), but a new equity time-series
+# point is only written once per interval — keeps the dashboard chart from
+# updating every short tick. Default 600s = every 10 minutes.
+EQUITY_SNAPSHOT_INTERVAL = _f("EQUITY_SNAPSHOT_INTERVAL", 600)
 
 # Tradability filters. Markets within a few hours of resolution are effectively
 # decided (prices pinned to 0.001/0.999, no liquidity), so forecast "edge" there
