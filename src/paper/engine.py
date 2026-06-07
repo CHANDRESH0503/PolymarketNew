@@ -35,15 +35,25 @@ def capped_budget(stake: float, cash: float, cash_floor: float,
     return max(0.0, min(stake, cash - cash_floor, day_cap - day_deployed))
 
 
-def _market_state(condition_id: str) -> dict | None:
-    """Live price + resolution state for a market, by condition id."""
+def _gamma_markets(params: dict) -> list | None:
     try:
-        r = requests.get(f"{GAMMA_API}/markets",
-                         params={"condition_ids": condition_id}, timeout=15)
+        r = requests.get(f"{GAMMA_API}/markets", params=params, timeout=15)
         r.raise_for_status()
-        d = r.json()
+        return r.json()
     except Exception:  # noqa: BLE001
         return None
+
+
+def _market_state(condition_id: str) -> dict | None:
+    """Live price + resolution state for a market, by condition id.
+
+    Gamma's /markets endpoint filters out *closed* markets by default, so a
+    market that has resolved returns []. That left settled positions stuck as
+    'open' forever (never marked to the 0/1 resolution). We retry with
+    closed=true so the resolution is visible and the position can settle."""
+    d = _gamma_markets({"condition_ids": condition_id})
+    if not d:
+        d = _gamma_markets({"condition_ids": condition_id, "closed": "true"})
     if not d:
         return None
     m = d[0]
