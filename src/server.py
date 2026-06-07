@@ -81,7 +81,24 @@ def equity_series():
     con = db()
     rows = con.execute("SELECT ts, equity, realized, unrealized FROM equity "
                        "ORDER BY ts ASC").fetchall()
-    return jsonify([dict(r) for r in rows])
+    out = [dict(r) for r in rows]
+    # Append a live "now" point computed from fills (same source as /api/summary)
+    # so the chart head always agrees with the summary plates. Persisted snapshots
+    # are throttled, so without this the curve can lag a settlement and show a
+    # stale realized/unrealized split. Replace a near-coincident persisted point
+    # to avoid a tiny double-point at the head.
+    start = store.get_meta(con, "starting_cash", BANKROLL)
+    realized = con.execute(
+        "SELECT COALESCE(SUM(pnl),0) s FROM fills WHERE status='settled'").fetchone()["s"]
+    unrealized = con.execute(
+        "SELECT COALESCE(SUM(pnl),0) s FROM fills WHERE status='open'").fetchone()["s"]
+    live = {"ts": time.time(), "equity": start + realized + unrealized,
+            "realized": realized, "unrealized": unrealized}
+    if out and live["ts"] - out[-1]["ts"] <= 5:
+        out[-1] = live
+    else:
+        out.append(live)
+    return jsonify(out)
 
 
 @app.get("/api/positions")

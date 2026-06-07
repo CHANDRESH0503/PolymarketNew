@@ -203,7 +203,12 @@ class PaperBroker:
                 self.con.execute("UPDATE fills SET mark_price=?, pnl=? WHERE id=?",
                                  (price, unreal, f["id"]))
         self.con.commit()
-        self.snapshot()
+        # Force a snapshot on settlement: a resolution moves P&L from unrealized
+        # to realized in one step, and the normal throttle would leave the equity
+        # curve showing the stale split (realized=0) for up to EQUITY_SNAPSHOT_
+        # INTERVAL — disagreeing with the live summary plates. Settlements are
+        # infrequent (next-day), so forcing here costs nothing.
+        self.snapshot(force=bool(newly_settled))
         if newly_settled:
             self._notify_settlements(newly_settled)
 
