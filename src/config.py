@@ -43,6 +43,12 @@ CASH_BUFFER = _f("CASH_BUFFER", 0.10)
 # one day can't eat the whole book and starve the next day (which is already
 # trading). Positions recycle daily, so this keeps dry powder for each new date.
 MAX_DAY_FRACTION = _f("MAX_DAY_FRACTION", 0.5)
+# Max fraction of bankroll committed to any single CITY's open positions, across
+# all resolution days. One heat wave moves every bucket of a city together, so
+# without this the book concentrates in one station (the paper week ran ~70% in
+# Seoul) — a single bad station read or source mismatch then dominates P&L. Caps
+# correlated single-name risk on top of the per-day cap.
+MAX_CITY_FRACTION = _f("MAX_CITY_FRACTION", 0.25)
 # Paper fills walk the live order book (depth + slippage) instead of magically
 # filling the whole size at the quoted price. Falls back to quoted-price fills if
 # the book is unavailable.
@@ -99,6 +105,30 @@ PEER_LOOKBACK_HOURS = _f("PEER_LOOKBACK_HOURS", 36)    # how far back to read pe
 NO_HARVEST = _b("NO_HARVEST", "0")
 NO_HARVEST_MAX_P = _f("NO_HARVEST_MAX_P", 0.03)        # max model P(Yes) to call it a "favorite No"
 NO_HARVEST_STAKE = _f("NO_HARVEST_STAKE", 25)          # hard cap per sleeve ticket (USDC)
+
+# Resolution-audit TRUST GATE for the capital-builder harvest sleeves. A station
+# is only trusted to harvest on if round(our METAR daily max) has matched the
+# Polymarket resolution on >= AUDIT_MIN_MATCH of >= AUDIT_MIN_SAMPLES audited
+# resolutions (table populated by scripts/resolution_audit.py). The load-bearing
+# safety check: without it a "locked" favorite could be one our source disagrees
+# with the resolver on. (Seoul/RKSI was once feared a ~50% match; that was a flaky
+# IEM fetch dropping its rows, not a real mismatch — with metar.py's retry it now
+# audits 6/6 = 100%, like every other station.) 0/0 ⇒ gate off (trust all).
+AUDIT_MIN_MATCH = _f("AUDIT_MIN_MATCH", 0.8)
+AUDIT_MIN_SAMPLES = int(_f("AUDIT_MIN_SAMPLES", 5))
+
+# Tier 3 capital-builder: same-day CONVERGENCE HARVEST (the ColdMath edge, risk-
+# gated). Once the day's high has locked in (nowcast collapse-meter floor_locked
+# >= MIN_LOCK), buy the near-certain bucket (model P >= MIN_P on whichever side is
+# the favorite) for the last few cents of convergence — small capped tickets, on
+# audit-trusted stations only. Deliberately bypasses MIN_HOURS_TO_RESOLVE (it is
+# the late same-day window the horizon filter excludes). Requires NOWCAST=1 (the
+# nowcast scorer is what folds live obs in for same-day markets).
+NOWCAST_HARVEST = _b("NOWCAST_HARVEST", "0")
+NOWCAST_HARVEST_MIN_P = _f("NOWCAST_HARVEST_MIN_P", 0.92)      # min nowcast P on the favored side
+NOWCAST_HARVEST_MIN_LOCK = _f("NOWCAST_HARVEST_MIN_LOCK", 0.85)  # min collapse-meter (floor_locked)
+NOWCAST_HARVEST_MIN_EDGE = _f("NOWCAST_HARVEST_MIN_EDGE", 0.02)  # min edge vs price (room to harvest)
+NOWCAST_HARVEST_STAKE = _f("NOWCAST_HARVEST_STAKE", 25)         # hard cap per harvest ticket (USDC)
 
 # Coherence arbitrage surfacing in the paper loop: scan events for Σ best-ask(YES)
 # < 1 baskets and record them for the dashboard. Real execution stays gated by

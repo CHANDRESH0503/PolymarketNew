@@ -13,7 +13,7 @@ import time
 import requests
 
 from ..config import (GAMMA_API, STATIONS, CASH_BUFFER, PAPER_DEPTH,
-                      MAX_DAY_FRACTION, EQUITY_SNAPSHOT_INTERVAL)
+                      MAX_DAY_FRACTION, MAX_CITY_FRACTION, EQUITY_SNAPSHOT_INTERVAL)
 from ..forecast.openmeteo import fetch_actual_max
 from ..forecast.metar import fetch_station_daily_max
 from ..polymarket import clob
@@ -28,11 +28,14 @@ def _city(question: str) -> str:
 
 
 def capped_budget(stake: float, cash: float, cash_floor: float,
-                  day_deployed: float, day_cap: float) -> float:
-    """USDC we may actually spend on one signal, after three independent limits:
-    the signal's own Kelly stake, the cash reserve buffer, and how much room is
-    left under this resolution-day's capital cap. Never negative."""
-    return max(0.0, min(stake, cash - cash_floor, day_cap - day_deployed))
+                  day_deployed: float, day_cap: float,
+                  city_deployed: float = 0.0, city_cap: float = float("inf")) -> float:
+    """USDC we may actually spend on one signal, after the independent limits:
+    the signal's own Kelly stake, the cash reserve buffer, how much room is left
+    under this resolution-day's capital cap, and how much room is left under this
+    city's exposure cap (correlated single-name risk). Never negative."""
+    return max(0.0, min(stake, cash - cash_floor,
+                        day_cap - day_deployed, city_cap - city_deployed))
 
 
 def _gamma_markets(params: dict) -> list | None:
@@ -94,6 +97,15 @@ class PaperBroker:
             "WHERE status='open' AND substr(end_date,1,10)=?", (day,)).fetchone()
         return float(row["c"])
 
+    def city_deployed(self, city: str) -> float:
+        """USDC of open cost already committed to a city, across all days."""
+        if not city:
+            return 0.0
+        row = self.con.execute(
+            "SELECT COALESCE(SUM(cost),0) c FROM fills "
+            "WHERE status='open' AND city=?", (city,)).fetchone()
+        return float(row["c"])
+
     def prefetch_books(self, token_ids: list[str]) -> None:
         """Batch-fetch the order books we're about to fill against (one call)."""
         self._books = {}
@@ -125,8 +137,10 @@ class PaperBroker:
         start = store.get_meta(self.con, "starting_cash")
         floor = CASH_BUFFER * start                     # never spend below the reserve
         day_cap = MAX_DAY_FRACTION * start              # max committed to one day
+        city_cap = MAX_CITY_FRACTION * start            # max committed to one city
         budget = capped_budget(sig.stake, cash, floor,
-                               self.day_deployed(sig.market.end_date), day_cap)
+                               self.day_deployed(sig.market.end_date), day_cap,
+                               self.city_deployed(_city(sig.market.question)), city_cap)
         if budget < 1:
             return False
         shares, avg_price, cost = self._simulate_fill(sig, budget)

@@ -11,17 +11,32 @@ METAR temperatures are reported in whole °C, matching the market's rounding.
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 import requests
 
 IEM_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+
+# IEM intermittently returns an empty body (header only, or nothing at all) for a
+# query that succeeds on retry — observed ~1-in-3 under the audit's concurrency.
+# Treating that transient empty as "no observations" silently drops resolved
+# stations from the audit (Seoul kept losing the dice roll → never landed) and
+# starves the live actuals-backfill + nowcast floor, which share this function.
+# So we retry with backoff: an empty body for a PAST date that should have obs is
+# retried; a genuinely empty result (future/unobserved date) just costs the
+# retries then returns []. Connection reuse via a shared Session.
+_RETRIES = 4
+_BACKOFF = 1.5          # seconds, multiplied each attempt (1.5, 3.0, 6.0, …)
+_session = requests.Session()
 
 
 def _fetch_rows(icao: str, start: str, end: str, tz: str) -> list[tuple[str, float]]:
     """Raw (local_timestamp, tmpc) observations over [start, end] from IEM ASOS.
 
     Timestamps are 'YYYY-MM-DD HH:MM' in the station's local tz; only rows with a
-    parseable temperature are returned."""
+    parseable temperature are returned. Retries transient empty/failed responses
+    (see module note) so a flaky fetch can't masquerade as a station having no
+    observations."""
     d2 = dt.date.fromisoformat(end) + dt.timedelta(days=1)   # IEM end is exclusive-ish
     d1 = dt.date.fromisoformat(start)
     params = {
@@ -30,23 +45,29 @@ def _fetch_rows(icao: str, start: str, end: str, tz: str) -> list[tuple[str, flo
         "year1": d1.year, "month1": d1.month, "day1": d1.day,
         "year2": d2.year, "month2": d2.month, "day2": d2.day,
     }
-    try:
-        r = requests.get(IEM_URL, params=params, timeout=40)
-        r.raise_for_status()
-        lines = r.text.splitlines()
-    except Exception:  # noqa: BLE001
-        return []
-    rows: list[tuple[str, float]] = []
-    for line in lines[1:]:                      # skip header
-        parts = line.split(",")
-        if len(parts) < 3:
-            continue
-        ts = parts[1]                           # 'YYYY-MM-DD HH:MM' (local)
+    for attempt in range(_RETRIES):
         try:
-            rows.append((ts, float(parts[2])))
-        except ValueError:
-            continue
-    return rows
+            r = _session.get(IEM_URL, params=params, timeout=40)
+            r.raise_for_status()
+            lines = r.text.splitlines()
+        except Exception:  # noqa: BLE001
+            lines = []
+        rows: list[tuple[str, float]] = []
+        for line in lines[1:]:                  # skip header
+            parts = line.split(",")
+            if len(parts) < 3:
+                continue
+            ts = parts[1]                       # 'YYYY-MM-DD HH:MM' (local)
+            try:
+                rows.append((ts, float(parts[2])))
+            except ValueError:
+                continue
+        if rows:
+            return rows
+        # Empty/failed: retry with backoff (the data is usually there next time).
+        if attempt < _RETRIES - 1:
+            time.sleep(_BACKOFF * (attempt + 1))
+    return []
 
 
 def station_daily_max(icao: str, start: str, end: str, tz: str) -> dict[str, float]:

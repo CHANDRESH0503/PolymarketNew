@@ -102,6 +102,17 @@ def test_capped_budget_funds_new_day_while_old_day_full():
     assert j6 == 100            # <-- the fix: a new day is no longer starved
 
 
+def test_capped_budget_city_cap_binds():
+    # city already holds 480 of a 500 city cap → only 20 more, even with day/cash room
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=0, day_cap=5000,
+                         city_deployed=480, city_cap=500) == 20
+    # city full → zero (one heat-wave city can't take over the book)
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=0, day_cap=5000,
+                         city_deployed=500, city_cap=500) == 0
+    # default (no city cap supplied) is a no-op — back-compat with the day/cash limits
+    assert capped_budget(50, cash=5000, cash_floor=0, day_deployed=0, day_cap=5000) == 50
+
+
 def test_portfolio_sizing_noop_when_off(monkeypatch):
     import src.strategy.edge as edge
     from src.strategy.edge import Signal, _apply_portfolio_sizing

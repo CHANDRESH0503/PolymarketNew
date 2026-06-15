@@ -65,7 +65,7 @@ def audit_event(ev: dict) -> dict | None:
     }
 
 
-def audit_events(events: list[dict], workers: int = 12) -> list[dict]:
+def audit_events(events: list[dict], workers: int = 6) -> list[dict]:
     with ThreadPoolExecutor(max_workers=workers) as ex:
         rows = list(ex.map(audit_event, events))
     return [r for r in rows if r]

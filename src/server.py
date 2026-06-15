@@ -18,7 +18,7 @@ from .config import (ROOT, STATIONS, BANKROLL, CALIBRATION, DRY_RUN, NOWCAST,
                      CORR_KELLY, CORR_KELLY_RHO, MIN_EDGE, KELLY_FRACTION,
                      MAX_STAKE_PER_MARKET, MIN_PRICE, MAX_PRICE,
                      MIN_HOURS_TO_RESOLVE, ARB_EXECUTE, LP_EXECUTE,
-                     CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION,
+                     CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION, MAX_CITY_FRACTION,
                      PEER_SIGNAL, PEER_WALLETS, NO_HARVEST, NO_HARVEST_MAX_P,
                      NO_HARVEST_STAKE, ARB_SCAN)
 from .analysis.resolution_audit import summarize as summarize_audit
@@ -305,6 +305,8 @@ def exposure():
         "investable": round(start * (1.0 - CASH_BUFFER), 2),
         "day_cap": round(start * MAX_DAY_FRACTION, 2),
         "max_day_fraction": MAX_DAY_FRACTION,
+        "city_cap": round(start * MAX_CITY_FRACTION, 2),
+        "max_city_fraction": MAX_CITY_FRACTION,
         "depth_fills": PAPER_DEPTH,
     })
 
