@@ -27,13 +27,16 @@ def _b(key: str, default: str) -> bool:
 # Strategy knobs
 MIN_EDGE = _f("MIN_EDGE", 0.07)
 KELLY_FRACTION = _f("KELLY_FRACTION", 0.25)
-MAX_STAKE_PER_MARKET = _f("MAX_STAKE_PER_MARKET", 100)
+MAX_STAKE_PER_MARKET = _f("MAX_STAKE_PER_MARKET", 5)
+# Floor on a single ticket, in USDC. A sized stake below this is dropped (not
+# rounded up) — it filters marginal, low-edge bets that aren't worth a position.
+MIN_STAKE_PER_MARKET = _f("MIN_STAKE_PER_MARKET", 1.5)
 # Per-market stake cap as a fraction of *live equity*. The effective ceiling is
 # min(MAX_STAKE_PER_MARKET, MAX_STAKE_FRACTION × equity), so a single bet can't
 # blow up the book — and the cap rises as capital compounds and falls in a
 # drawdown. Set 0 to disable and fall back to the flat MAX_STAKE_PER_MARKET.
 MAX_STAKE_FRACTION = _f("MAX_STAKE_FRACTION", 0.05)
-BANKROLL = _f("BANKROLL", 2000)
+BANKROLL = _f("BANKROLL", 100)
 DRY_RUN = _b("DRY_RUN", "1")
 
 # Fraction of bankroll always kept in cash (never deployed). A reserve buffer so

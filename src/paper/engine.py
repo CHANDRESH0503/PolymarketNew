@@ -13,7 +13,8 @@ import time
 import requests
 
 from ..config import (GAMMA_API, STATIONS, CASH_BUFFER, PAPER_DEPTH,
-                      MAX_DAY_FRACTION, MAX_CITY_FRACTION, EQUITY_SNAPSHOT_INTERVAL)
+                      MAX_DAY_FRACTION, MAX_CITY_FRACTION, EQUITY_SNAPSHOT_INTERVAL,
+                      MIN_STAKE_PER_MARKET)
 from ..forecast.openmeteo import fetch_actual_max
 from ..forecast.metar import fetch_station_daily_max
 from ..polymarket import clob
@@ -141,10 +142,10 @@ class PaperBroker:
         budget = capped_budget(sig.stake, cash, floor,
                                self.day_deployed(sig.market.end_date), day_cap,
                                self.city_deployed(_city(sig.market.question)), city_cap)
-        if budget < 1:
+        if budget < MIN_STAKE_PER_MARKET:
             return False
         shares, avg_price, cost = self._simulate_fill(sig, budget)
-        if shares <= 0 or cost < 1:
+        if shares <= 0 or cost < MIN_STAKE_PER_MARKET:
             return False
         slippage = round(avg_price - sig.price, 5)
         fill_ratio = round(cost / sig.stake, 4) if sig.stake else 1.0
