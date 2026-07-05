@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ..config import (MIN_EDGE, STATIONS, MIN_PRICE, MAX_PRICE,
                       MIN_HOURS_TO_RESOLVE, CALIBRATION, NOWCAST,
-                      CORR_KELLY, CASH_BUFFER, BANKROLL,
+                      CORR_KELLY, CASH_BUFFER, BANKROLL, MIN_RESOLVE_DATE,
                       NO_HARVEST, NO_HARVEST_MAX_P, NO_HARVEST_STAKE)
 from ..forecast.openmeteo import fetch_max_temp_distribution, MaxTempForecast
 from ..forecast.model import yes_probability, apply_calibration
@@ -89,9 +89,21 @@ def _horizon_ok(m: TempMarket) -> bool:
     return _hours_to_resolve(m.end_date) >= MIN_HOURS_TO_RESOLVE
 
 
+def _resolve_date_ok(m: TempMarket) -> bool:
+    """Honor MIN_RESOLVE_DATE: only trade markets resolving on/after the floor.
+    Used for a clean live start so the book opens no positions before a chosen
+    day. Compares the market's resolution date (YYYY-MM-DD) lexicographically,
+    which is correct for ISO dates. Blank floor = allow everything."""
+    if not MIN_RESOLVE_DATE:
+        return True
+    return m.end_date[:10] >= MIN_RESOLVE_DATE
+
+
 def is_tradable(m: TempMarket) -> bool:
     """Skip markets that are mid-resolution (pinned price / dead liquidity) or
     too close to settlement for a forecast edge to be real."""
+    if not _resolve_date_ok(m):
+        return False
     if not _horizon_ok(m):
         return False
     if not (MIN_PRICE <= m.yes_price <= MAX_PRICE):
@@ -102,6 +114,8 @@ def is_tradable(m: TempMarket) -> bool:
 def evaluate_market(m: TempMarket, fc, min_edge: float = MIN_EDGE,
                     peer_book: dict | None = None,
                     bankroll: float = BANKROLL) -> Signal | None:
+    if not _resolve_date_ok(m):
+        return None
     if not _horizon_ok(m):
         return None
     p_yes = _p_yes(fc, m.bucket_kind, m.threshold_c)
@@ -181,6 +195,8 @@ def generate_signals(markets: list[TempMarket],
         station = m.station_code
         if not station or station not in STATIONS:
             continue
+        if not _resolve_date_ok(m):
+            continue          # clean-start floor: skip markets resolving too early
         date = m.end_date[:10]
         key = (station, date)
         if key not in cache:

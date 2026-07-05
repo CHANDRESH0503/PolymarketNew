@@ -38,6 +38,11 @@ MIN_STAKE_PER_MARKET = _f("MIN_STAKE_PER_MARKET", 1.5)
 MAX_STAKE_FRACTION = _f("MAX_STAKE_FRACTION", 0.05)
 BANKROLL = _f("BANKROLL", 100)
 DRY_RUN = _b("DRY_RUN", "1")
+# Earliest market *resolution date* (YYYY-MM-DD) the bot is allowed to trade.
+# Markets resolving before this are skipped entirely — used for a clean live
+# start so the book only opens positions from a chosen day forward. Blank = no
+# floor (trade every open market discovered).
+MIN_RESOLVE_DATE = _clean("MIN_RESOLVE_DATE", "")
 
 # Fraction of bankroll always kept in cash (never deployed). A reserve buffer so
 # the book can't drift to 100%-invested with no dry powder.
