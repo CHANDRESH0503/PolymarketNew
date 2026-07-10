@@ -83,6 +83,26 @@ main,header{position:relative;z-index:1;max-width:var(--max);margin:0 auto}
 @media(max-width:1100px){.plates{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:560px){.plates{grid-template-columns:repeat(2,1fr)}}
 
+/* ---------- Live account band (REAL money — visually distinct) ---------- */
+.section-caption{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--muted);margin:0 0 8px 2px}
+.live-band{border:1px solid var(--brass);border-top:3px solid var(--brass);
+  background:linear-gradient(180deg,rgba(154,122,44,.05),rgba(154,122,44,0) 60%);
+  box-shadow:2px 3px 0 rgba(154,122,44,.10);margin-bottom:26px}
+.live-band-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;
+  gap:6px;padding:12px 18px;border-bottom:1px solid var(--rule)}
+.live-band-head h2{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:12px;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--ink);margin:0}
+.live-band-head h2::before{content:"◆ ";color:var(--brass)}
+.badge.live-badge{vertical-align:1px}
+.badge.live-badge.on{color:var(--gain);border-color:var(--gain);background:rgba(36,92,52,.08)}
+.badge.live-badge.warn{color:var(--loss);border-color:var(--loss);background:rgba(140,43,36,.06)}
+.live-band .plates.live{margin:0;border:0}
+.live-pos{border-top:1px solid var(--rule)}
+.live-pos-head{display:flex;justify-content:space-between;padding:9px 18px 0;
+  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted)}
+
 /* ---------- Panels ---------- */
 .panel{background:var(--card);border:1px solid var(--rule-strong);margin-bottom:24px;
   box-shadow:2px 3px 0 rgba(33,29,22,.045)}

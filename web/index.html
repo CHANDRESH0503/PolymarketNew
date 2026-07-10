@@ -34,7 +34,30 @@
       <span class="almanac-meta" id="almanac-meta">—</span></div>
   </section>
 
-  <!-- Summary plates -->
+  <!-- Live account (REAL Polymarket) — kept separate from the paper book -->
+  <section class="live-band" id="live-band">
+    <div class="live-band-head">
+      <h2>Live Account · Real Polymarket <span class="badge live-badge" id="live-badge">—</span></h2>
+      <span class="panel-note" id="live-note">—</span>
+    </div>
+    <div class="plates live" id="live-plates"></div>
+    <div class="live-pos">
+      <div class="live-pos-head"><span>Live Positions</span><span id="live-pos-count">—</span></div>
+      <div class="table-wrap">
+        <table class="ledger" id="live-positions">
+          <thead><tr>
+            <th class="l">Market</th><th>Side</th>
+            <th class="r">Size</th><th class="r">Avg</th><th class="r">Mark</th>
+            <th class="r">Value</th><th class="r">P&amp;L</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Summary plates (paper / simulated book) -->
+  <div class="section-caption">Paper Trading · Simulated Book</div>
   <section class="plates" id="plates"></section>
 
   <!-- Equity curve hero -->

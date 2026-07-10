@@ -43,6 +43,72 @@ function renderPlates(s) {
     s.brier == null ? "Brier score pending first settlements" : `Brier ${s.brier.toFixed(3)}`;
 }
 
+/* ---------------- Live account (REAL Polymarket) ---------------- */
+function renderLive(d) {
+  const badge = document.getElementById("live-badge");
+  const note = document.getElementById("live-note");
+  if (!d) { note.textContent = "unavailable"; return; }
+  badge.textContent = d.armed ? "ARMED" : "DRY-RUN";
+  badge.className = "badge live-badge " + (d.armed ? "on" : "warn");
+  const w = d.wallet ? d.wallet.slice(0, 6) + "…" + d.wallet.slice(-4) : "—";
+  const up = d.updated ? new Date(d.updated * 1000).toLocaleString("en-US",
+    { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  note.innerHTML = `${w} · updated ${up}` +
+    (d.error ? ` · <span class="neg">${d.error}</span>` : "");
+
+  const plates = [
+    ["Balance", fmtUSD(d.cash, false), "USDC available", ""],
+    ["Equity", fmtUSD(d.equity, false), d.baseline != null ? `start ${fmtUSD(d.baseline, false)}` : "cash + positions", ""],
+    ["Total P&L", fmtUSD(d.total_pnl), d.roi != null ? pct(d.roi, 2) + " ROI" : "vs deposit", signClass(d.total_pnl)],
+    ["Unrealized", fmtUSD(d.unrealized), "open marks", signClass(d.unrealized)],
+    ["Realized", fmtUSD(d.realized), "settled", signClass(d.realized)],
+    ["Pos. Value", fmtUSD(d.positions_value, false), "at live marks", ""],
+    ["Positions", String(d.n_positions), "live held", ""],
+    ["Status", d.armed ? "ARMED" : "DRY", w, d.armed ? "pos" : "neg"],
+  ];
+  const c = document.getElementById("live-plates");
+  c.innerHTML = "";
+  for (const [k, v, sub, cls] of plates) {
+    const el2 = document.createElement("div");
+    el2.className = "plate";
+    el2.innerHTML = `<span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="sub">${sub}</span>`;
+    c.appendChild(el2);
+  }
+  renderLivePositions(d.positions || []);
+}
+
+function renderLivePositions(rows) {
+  document.getElementById("live-pos-count").textContent = `${rows.length} held`;
+  const tb = document.querySelector("#live-positions tbody");
+  tb.innerHTML = "";
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="7" class="empty">No live positions yet — real trades begin with July 13 markets</td></tr>`;
+    return;
+  }
+  for (const r of rows) {
+    const side = (r.outcome || "").toLowerCase();
+    const url = r.event_slug ? `https://polymarket.com/event/${encodeURIComponent(r.event_slug)}` : null;
+    const mkt = url
+      ? `<a href="${url}" target="_blank" rel="noopener" class="mkt-link" title="${r.title}">${shortQ(r.title)}</a>`
+      : `<span title="${r.title}">${shortQ(r.title)}</span>`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="l mkt">${mkt}</td>
+      <td><span class="tag ${side === "yes" ? "yes" : "no"}">${r.outcome}</span></td>
+      <td class="r">${r.size.toFixed(2)}</td>
+      <td class="r">${r.avg_price.toFixed(3)}</td>
+      <td class="r">${r.cur_price.toFixed(3)}</td>
+      <td class="r">${fmtUSD(r.value, false)}</td>
+      <td class="r ${signClass(r.pnl)}">${fmtUSD(r.pnl)}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+async function refreshLive() {
+  try { renderLive(await get("/weatherbot/api/live")); }
+  catch (e) { document.getElementById("live-note").textContent = "live account unavailable"; }
+}
+
 /* ---------------- Equity line chart ---------------- */
 function drawEquity(series, start) {
   const svg = document.getElementById("equity-chart");
@@ -647,6 +713,11 @@ async function refresh() {
   }
   if (!eventsLoaded) loadEvents().catch(() => {});
 }
+
+// Live (real Polymarket) account refreshes independently so a slow/failed live
+// fetch never blocks the paper dashboard. Server-side cached (~30s).
+refreshLive();
+setInterval(refreshLive, 30000);
 
 refresh();
 setInterval(refresh, 20000);

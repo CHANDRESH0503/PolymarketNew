@@ -8,6 +8,7 @@ that recomputes a city's ensemble distribution vs market prices on demand.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -20,9 +21,12 @@ from .config import (ROOT, STATIONS, BANKROLL, CALIBRATION, DRY_RUN, NOWCAST,
                      MIN_HOURS_TO_RESOLVE, ARB_EXECUTE, LP_EXECUTE,
                      CASH_BUFFER, PAPER_DEPTH, MAX_DAY_FRACTION, MAX_CITY_FRACTION,
                      PEER_SIGNAL, PEER_WALLETS, NO_HARVEST, NO_HARVEST_MAX_P,
-                     NO_HARVEST_STAKE, ARB_SCAN)
+                     NO_HARVEST_STAKE, ARB_SCAN, PK, CLOB_API, SIGNATURE_TYPE,
+                     POLY_PROXY_ADDRESS, CLOB_API_KEY, CLOB_API_SECRET,
+                     CLOB_API_PASSPHRASE)
 from .analysis.resolution_audit import summarize as summarize_audit
 from .paper import store
+from .polymarket import data_api
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
 from .forecast.openmeteo import MODELS
 from .forecast.model import yes_probability
@@ -192,6 +196,118 @@ def forecast():
                     "date": date, "mean": payload["mean"], "std": payload["std"],
                     "members": payload["members"], "buckets": buckets,
                     "updated": payload["ts"]})
+
+
+# ---- Live (REAL Polymarket wallet) snapshot -------------------------------
+# Deliberately separate from the paper SQLite so live and paper numbers never
+# merge: real cash comes from the CLOB balance endpoint (needs L2 creds), real
+# positions from the public Data API keyed by the proxy wallet. Cached so the
+# 20s dashboard poll (possibly several viewers) doesn't hammer either API.
+_LIVE_CACHE: dict = {"ts": 0.0, "data": None}
+_LIVE_TTL = 30.0
+_LIVE_BASELINE = ROOT / "data" / "live_baseline.json"
+
+
+def _live_baseline(equity):
+    """The funded deposit before any trades, used as the live P&L baseline so the
+    live row can show Total P&L / ROI like the paper row. Recorded once, from the
+    first real equity reading (right now: ~$200 cash, 0 positions)."""
+    try:
+        return json.loads(_LIVE_BASELINE.read_text())["baseline"]
+    except Exception:  # noqa: BLE001 — missing/corrupt => (maybe) record it now
+        pass
+    if equity is not None:
+        _LIVE_BASELINE.parent.mkdir(parents=True, exist_ok=True)
+        _LIVE_BASELINE.write_text(json.dumps({"baseline": equity, "ts": time.time()}))
+    return equity
+
+
+def _live_snapshot() -> dict:
+    wallet = POLY_PROXY_ADDRESS
+    errs: list[str] = []
+
+    # Real USDC cash on the proxy (collateral balance) via the authenticated CLOB.
+    cash = None
+    if PK and wallet:
+        try:
+            from py_clob_client.client import ClobClient
+            from py_clob_client.clob_types import (ApiCreds, BalanceAllowanceParams,
+                                                   AssetType)
+            cl = ClobClient(CLOB_API, key=PK, chain_id=137,
+                            signature_type=SIGNATURE_TYPE, funder=wallet)
+            cl.set_api_creds(ApiCreds(CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE))
+            ba = cl.get_balance_allowance(
+                BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+            cash = int(ba["balance"]) / 1e6      # USDC has 6 decimals
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"balance ({type(e).__name__})")
+
+    # Real open positions from the public Data API (no auth), keyed by proxy.
+    positions: list[dict] = []
+    pos_value = unrealized = realized = 0.0
+    if wallet:
+        try:
+            for p in data_api.get_positions(wallet):
+                val = float(p.get("currentValue") or 0.0)
+                cur = float(p.get("curPrice") or 0.0)
+                # Skip dead positions: resolved-to-zero buckets the wallet holds
+                # from BEFORE this clean live start (curPrice=0, value=0). They
+                # carry a stale negative cashPnl that is pre-history, not part of
+                # the July-13-onward book — showing them would merge old losses in.
+                if cur <= 0.0 and val <= 0.005:
+                    continue
+                cpnl = float(p.get("cashPnl") or 0.0)
+                rpnl = float(p.get("realizedPnl") or 0.0)
+                pos_value += val
+                unrealized += cpnl
+                realized += rpnl
+                positions.append({
+                    "title": p.get("title") or p.get("slug") or "—",
+                    "outcome": p.get("outcome") or "—",
+                    "size": float(p.get("size") or 0.0),
+                    "avg_price": float(p.get("avgPrice") or 0.0),
+                    "cur_price": float(p.get("curPrice") or 0.0),
+                    "value": round(val, 2),
+                    "pnl": round(cpnl, 2),
+                    "pct_pnl": p.get("percentPnl"),
+                    "event_slug": p.get("eventSlug") or p.get("slug"),
+                    "redeemable": bool(p.get("redeemable")),
+                })
+            positions.sort(key=lambda r: -r["value"])
+        except Exception as e:  # noqa: BLE001
+            errs.append(f"positions ({type(e).__name__})")
+
+    equity = (cash + pos_value) if cash is not None else None
+    baseline = _live_baseline(equity)
+    total_pnl = (equity - baseline) if (equity is not None and baseline is not None) else None
+    return {
+        "wallet": wallet,
+        "armed": (not DRY_RUN) and bool(PK),
+        "dry_run": DRY_RUN,
+        "cash": None if cash is None else round(cash, 2),
+        "positions_value": round(pos_value, 2),
+        "equity": None if equity is None else round(equity, 2),
+        "baseline": None if baseline is None else round(baseline, 2),
+        "total_pnl": None if total_pnl is None else round(total_pnl, 2),
+        "roi": (total_pnl / baseline) if (total_pnl is not None and baseline) else None,
+        "unrealized": round(unrealized, 2),
+        "realized": round(realized, 2),
+        "n_positions": len(positions),
+        "positions": positions,
+        "updated": time.time(),
+        "error": "; ".join(errs) if errs else None,
+    }
+
+
+@app.get("/api/live")
+def live():
+    """Real Polymarket wallet: cash, open positions, and P&L — kept entirely
+    separate from the paper book so the two never merge. Cached for _LIVE_TTL s."""
+    now = time.time()
+    if _LIVE_CACHE["data"] is None or now - _LIVE_CACHE["ts"] > _LIVE_TTL:
+        _LIVE_CACHE["data"] = _live_snapshot()
+        _LIVE_CACHE["ts"] = now
+    return jsonify(_LIVE_CACHE["data"])
 
 
 @app.get("/api/status")
