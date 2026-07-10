@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import requests
 
-from ..config import (CLOB_API, PK, POLY_PROXY_ADDRESS, DRY_RUN,
+from ..config import (CLOB_API, PK, POLY_PROXY_ADDRESS, DRY_RUN, SIGNATURE_TYPE,
                       CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE)
 
 
@@ -79,7 +79,7 @@ def _client():
 
     client = ClobClient(
         CLOB_API, key=PK, chain_id=137,
-        signature_type=2, funder=POLY_PROXY_ADDRESS,
+        signature_type=SIGNATURE_TYPE, funder=POLY_PROXY_ADDRESS,
     )
     if CLOB_API_KEY:
         client.set_api_creds(ApiCreds(CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE))

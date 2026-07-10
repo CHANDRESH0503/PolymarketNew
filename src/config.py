@@ -150,9 +150,16 @@ ARB_SCAN = _b("ARB_SCAN", "1")
 # (The intraday nowcast still refreshes every tick — it must fold in new obs.)
 FORECAST_TTL = _f("FORECAST_TTL", 5400)   # seconds (default 90 min)
 
-# Wallet / CLOB
-PK = os.getenv("PK", "")
-POLY_PROXY_ADDRESS = os.getenv("POLY_PROXY_ADDRESS", "")
+# Wallet / CLOB. Accept both the canonical names (PK / POLY_PROXY_ADDRESS) and
+# the wallet-export names (PRIVATE_KEY / WALLET_ADDRESS) so either .env layout
+# wires the live client. Without this, PK is empty and place_order silently
+# falls back to the DRY_RUN stub even with DRY_RUN=0.
+PK = os.getenv("PK", "") or os.getenv("PRIVATE_KEY", "")
+POLY_PROXY_ADDRESS = os.getenv("POLY_PROXY_ADDRESS", "") or os.getenv("WALLET_ADDRESS", "")
+# Polymarket CLOB signature type: 0=EOA, 1=email/magic proxy, 2=browser-wallet
+# proxy (Gnosis Safe), 3=... — passed straight to py-clob-client. Must match how
+# the funding wallet was created.
+SIGNATURE_TYPE = int(_f("SIGNATURE_TYPE", 2))
 CLOB_API_KEY = os.getenv("CLOB_API_KEY", "")
 CLOB_API_SECRET = os.getenv("CLOB_API_SECRET", "")
 CLOB_API_PASSPHRASE = os.getenv("CLOB_API_PASSPHRASE", "")
