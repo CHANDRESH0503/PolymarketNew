@@ -4,6 +4,9 @@ python-dotenv>=1.0
 numpy>=1.26
 scipy>=1.11
 pandas>=2.1
-# Execution (only needed when you enable live trading):
-py-clob-client>=0.17
+# Execution (only needed when you enable live trading). v2 is the client the
+# order-service now requires ("invalid order version" from the legacy one) and
+# the one that supports this wallet's signature_type=3:
+py-clob-client-v2>=1.0.1
+py-clob-client>=0.17   # legacy — read-only balance/allowance helpers still work
 flask>=3.0

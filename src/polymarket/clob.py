@@ -72,18 +72,36 @@ def walk_asks(book: dict | None, limit_price: float, budget_usdc: float
 
 
 def _client():
-    """Lazily build a py-clob-client. Imported here so the rest of the bot runs
-    without the trading dependency installed."""
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
+    """Lazily build a py-clob-client-v2 client. Imported here so the rest of the
+    bot runs without the trading dependency installed.
 
-    client = ClobClient(
-        CLOB_API, key=PK, chain_id=137,
+    We use the **v2** client (py_clob_client_v2), not the legacy py_clob_client:
+    Polymarket's order-service rejects orders built by the old client with
+    "invalid order version, please use the latest clob-client", and only v2
+    supports this wallet's signature_type=3. This mirrors the working polybot on
+    the same host (identical funder wallet + sig type + v2 client)."""
+    from py_clob_client_v2 import ClobClient
+    from py_clob_client_v2.clob_types import ApiCreds
+
+    creds = None
+    if CLOB_API_KEY:
+        creds = ApiCreds(api_key=CLOB_API_KEY, api_secret=CLOB_API_SECRET,
+                         api_passphrase=CLOB_API_PASSPHRASE)
+    return ClobClient(
+        host=CLOB_API, chain_id=137, key=PK, creds=creds,
         signature_type=SIGNATURE_TYPE, funder=POLY_PROXY_ADDRESS,
     )
-    if CLOB_API_KEY:
-        client.set_api_creds(ApiCreds(CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE))
-    return client
+
+
+def _align_to_tick(price: float, tick: float) -> float:
+    """Snap a price to the market's tick grid (e.g. 0.01) so the CLOB accepts it.
+    Our signal prices can carry sub-tick precision (a 0.855 on a 0.01 grid), which
+    the order-service rejects. Round to the nearest valid tick and clamp inside
+    (tick, 1-tick)."""
+    if tick <= 0:
+        return round(price, 3)
+    px = round(round(price / tick) * tick, 6)
+    return min(max(px, tick), round(1.0 - tick, 6))
 
 
 def create_api_key() -> None:
@@ -95,6 +113,25 @@ def create_api_key() -> None:
     print(f"CLOB_API_PASSPHRASE={creds.api_passphrase}")
 
 
+def _post(client, token_id: str, price: float, shares: float):
+    """Create + post one BUY order via the v2 client, resolving the market's tick
+    size and neg-risk flag first (weather buckets are neg-risk multi-outcome, so
+    the order must be signed against the neg-risk exchange)."""
+    from py_clob_client_v2.clob_types import OrderArgs, PartialCreateOrderOptions, OrderType
+    from py_clob_client_v2.order_builder.constants import BUY
+
+    # get_tick_size returns a TickSize (a string like "0.01"); pass it through
+    # unchanged — the client's ROUNDING_CONFIG is keyed by that exact string, so
+    # float() would KeyError. Only the tick math below needs the numeric value.
+    tick = client.get_tick_size(token_id)
+    neg_risk = bool(client.get_neg_risk(token_id))
+    px = _align_to_tick(price, float(tick))
+    options = PartialCreateOrderOptions(tick_size=tick, neg_risk=neg_risk)
+    return client.create_and_post_order(
+        OrderArgs(token_id=token_id, price=px, size=round(shares, 2), side=BUY),
+        options=options, order_type=OrderType.GTC)
+
+
 def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dict:
     """Buy `size_usdc` worth of `token_id` at limit `price`.
 
@@ -103,7 +140,7 @@ def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dic
     """
     shares = round(size_usdc / price, 2)
     # Guard against non-positive / sub-tick orders: a ~$0 stake rounds to 0 shares,
-    # which the CLOB rejects with "Invalid order inputs". Skip rather than send.
+    # which the CLOB rejects. Skip rather than send.
     if size_usdc <= 0 or price <= 0 or shares <= 0:
         print(f"   [skip] non-positive order for {token_id[:10]}… "
               f"(${size_usdc:.2f} @ {price:.3f} = {shares} shares)")
@@ -114,13 +151,7 @@ def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dic
         print(f"   [DRY_RUN] would place {order}")
         return {"dry_run": True, **order}
 
-    from py_clob_client.clob_types import OrderArgs
-    from py_clob_client.order_builder.constants import BUY
-
-    client = _client()
-    signed = client.create_order(OrderArgs(
-        token_id=token_id, price=round(price, 3), size=shares, side=BUY))
-    resp = client.post_order(signed)
+    resp = _post(_client(), token_id, price, shares)
     print(f"   [LIVE] order resp: {resp}")
     return resp
 
@@ -135,13 +166,7 @@ def place_maker(token_id: str, price: float, shares: float) -> dict:
         print(f"   [DRY_RUN] would quote {order}")
         return {"dry_run": True, **order}
 
-    from py_clob_client.clob_types import OrderArgs
-    from py_clob_client.order_builder.constants import BUY
-
-    client = _client()
-    signed = client.create_order(OrderArgs(
-        token_id=token_id, price=round(price, 3), size=round(shares, 2), side=BUY))
-    return client.post_order(signed)
+    return _post(_client(), token_id, price, shares)
 
 
 def cancel_all() -> dict:
