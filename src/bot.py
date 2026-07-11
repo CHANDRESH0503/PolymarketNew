@@ -15,7 +15,7 @@ import argparse
 import json
 import time
 
-from .config import MIN_EDGE, DRY_RUN, ROOT
+from .config import MIN_EDGE, DRY_RUN, ROOT, MIN_STAKE_PER_MARKET
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
 from .polymarket.clob import place_order
 from .strategy.edge import generate_signals
@@ -56,14 +56,29 @@ def run_once() -> None:
         print(" ", s)
 
     placed = _load_placed()
+    n_placed = n_small = 0
     for s in signals:
         if s.token_id in placed:
             print(f"  skip (already ordered): {s.token_id[:10]}… {s.side}")
             continue
-        place_order(s.token_id, "BUY", s.price, s.stake)
+        # Mirror the paper engine (engine.execute): drop stakes below the per-market
+        # floor. Correlation-Kelly re-sizing shrinks most correlated legs toward ~0,
+        # and a $0 stake would build a 0-share order the CLOB rejects ("Invalid order
+        # inputs") — which, unguarded, used to crash the whole batch on the first leg.
+        if s.stake < MIN_STAKE_PER_MARKET:
+            n_small += 1
+            continue
+        try:
+            place_order(s.token_id, "BUY", s.price, s.stake)
+        except Exception as e:  # noqa: BLE001 — one bad order must not stop the batch
+            print(f"  ! order failed {s.token_id[:10]}… {s.side} ${s.stake:.2f}: {e}")
+            continue
+        n_placed += 1
         if not DRY_RUN:
             _record_placed(s.token_id)
             placed.add(s.token_id)
+    print(f"\nplaced {n_placed} order(s); skipped {n_small} below "
+          f"${MIN_STAKE_PER_MARKET:.2f} min stake")
 
 
 def main() -> None:

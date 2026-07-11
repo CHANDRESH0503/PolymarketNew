@@ -102,6 +102,12 @@ def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dic
     response, or a dry-run stub.
     """
     shares = round(size_usdc / price, 2)
+    # Guard against non-positive / sub-tick orders: a ~$0 stake rounds to 0 shares,
+    # which the CLOB rejects with "Invalid order inputs". Skip rather than send.
+    if size_usdc <= 0 or price <= 0 or shares <= 0:
+        print(f"   [skip] non-positive order for {token_id[:10]}… "
+              f"(${size_usdc:.2f} @ {price:.3f} = {shares} shares)")
+        return {"skipped": True, "reason": "non_positive_size", "token_id": token_id}
     order = {"token_id": token_id, "side": "BUY", "price": round(price, 3), "size": shares}
 
     if DRY_RUN or not PK:
