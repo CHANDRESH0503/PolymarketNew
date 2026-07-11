@@ -37,6 +37,11 @@ MIN_STAKE_PER_MARKET = _f("MIN_STAKE_PER_MARKET", 1.5)
 # drawdown. Set 0 to disable and fall back to the flat MAX_STAKE_PER_MARKET.
 MAX_STAKE_FRACTION = _f("MAX_STAKE_FRACTION", 0.05)
 BANKROLL = _f("BANKROLL", 100)
+# Polymarket rejects any order below this many shares ("Size (x) lower than the
+# minimum: 5"). A stake that buys fewer (e.g. $2 of a $0.85 "No" ≈ 2.4 shares)
+# is bumped up to this floor at placement. With MAX_PRICE 0.97, a 5-share order
+# costs at most ~$4.85, so it stays within a $5 per-market cap.
+MIN_ORDER_SHARES = _f("MIN_ORDER_SHARES", 5)
 DRY_RUN = _b("DRY_RUN", "1")
 # Earliest market *resolution date* (YYYY-MM-DD) the bot is allowed to trade.
 # Markets resolving before this are skipped entirely — used for a clean live

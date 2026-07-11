@@ -13,7 +13,8 @@ from __future__ import annotations
 import requests
 
 from ..config import (CLOB_API, PK, POLY_PROXY_ADDRESS, DRY_RUN, SIGNATURE_TYPE,
-                      CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE)
+                      CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE,
+                      MIN_ORDER_SHARES)
 
 
 # ---- read-only order book (no auth needed) --------------------------------
@@ -145,6 +146,11 @@ def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dic
         print(f"   [skip] non-positive order for {token_id[:10]}… "
               f"(${size_usdc:.2f} @ {price:.3f} = {shares} shares)")
         return {"skipped": True, "reason": "non_positive_size", "token_id": token_id}
+    # Polymarket enforces a per-order minimum of MIN_ORDER_SHARES shares; a smaller
+    # order is rejected ("Size (x) lower than the minimum: 5"). Bump up to the floor
+    # — bounded, since floor × price ≤ 5 × 0.97 < the $5 per-market cap.
+    if shares < MIN_ORDER_SHARES:
+        shares = round(MIN_ORDER_SHARES, 2)
     order = {"token_id": token_id, "side": "BUY", "price": round(price, 3), "size": shares}
 
     if DRY_RUN or not PK:
