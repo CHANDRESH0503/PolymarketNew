@@ -15,9 +15,12 @@ import argparse
 import json
 import time
 
-from .config import MIN_EDGE, DRY_RUN, ROOT, MIN_STAKE_PER_MARKET
+from .config import (MIN_EDGE, DRY_RUN, ROOT, MIN_STAKE_PER_MARKET, BANKROLL,
+                    PK, POLY_PROXY_ADDRESS, SIGNATURE_TYPE, CLOB_API,
+                    CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE)
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
 from .polymarket.clob import place_order
+from .polymarket import data_api
 from .strategy.edge import generate_signals
 
 # Idempotency ledger of token_ids we have already sent a live order for. The
@@ -43,6 +46,45 @@ def _record_placed(token_id: str) -> None:
     _PLACED_PATH.write_text(json.dumps(sorted(placed)))
 
 
+def _live_equity() -> float | None:
+    """Real wallet equity = collateral cash + open-position value.
+
+    The live path must size Kelly against *actual capital*, exactly as the paper
+    daemon sizes against paper equity — otherwise the two diverge. With the static
+    config BANKROLL (100) the corr-Kelly book fragments across ~50 correlated legs
+    and the marginal ones fall below MIN_STAKE_PER_MARKET, so live places almost
+    nothing while paper (higher equity) fills them: the "paper trades but live
+    doesn't" symptom. Sizing on the real ~$200 wallet lifts those legs over the
+    floor. Returns None (→ caller falls back to BANKROLL) when DRY_RUN, creds are
+    missing, or the balance call fails. Mirrors server._live_snapshot."""
+    if DRY_RUN or not (PK and POLY_PROXY_ADDRESS):
+        return None
+    try:
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import (ApiCreds, BalanceAllowanceParams,
+                                               AssetType)
+        cl = ClobClient(CLOB_API, key=PK, chain_id=137,
+                        signature_type=SIGNATURE_TYPE, funder=POLY_PROXY_ADDRESS)
+        cl.set_api_creds(ApiCreds(CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE))
+        ba = cl.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        cash = int(ba["balance"]) / 1e6                 # USDC has 6 decimals
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! live balance fetch failed ({e}); sizing on static BANKROLL")
+        return None
+    pos_value = 0.0
+    try:
+        for p in data_api.get_positions(POLY_PROXY_ADDRESS):
+            cur = float(p.get("curPrice") or 0.0)
+            val = float(p.get("currentValue") or 0.0)
+            if cur <= 0.0 and val <= 0.005:             # skip resolved-to-zero dust
+                continue
+            pos_value += val
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! live positions fetch failed ({e}); cash-only bankroll")
+    return round(cash + pos_value, 2)
+
+
 def run_once() -> None:
     print(f"\n=== scan @ {time.strftime('%Y-%m-%d %H:%M:%S')} "
           f"(DRY_RUN={DRY_RUN}, MIN_EDGE={MIN_EDGE}) ===")
@@ -50,7 +92,11 @@ def run_once() -> None:
     markets = [m for ev in events for m in parse_event(ev)]
     print(f"discovered {len(events)} temperature events / {len(markets)} bucket markets")
 
-    signals = generate_signals(markets)
+    eq = _live_equity()
+    bankroll = eq if eq is not None else BANKROLL
+    print(f"sizing bankroll = ${bankroll:.2f} "
+          f"({'live wallet equity' if eq is not None else 'static BANKROLL'})")
+    signals = generate_signals(markets, bankroll=bankroll)
     print(f"\n{len(signals)} actionable signal(s):")
     for s in signals:
         print(" ", s)
