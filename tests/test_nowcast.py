@@ -113,3 +113,27 @@ def test_correlated_stakes_respect_bankroll_and_cap():
                                bankroll=1000, fraction=1.0, cap=100, rho=0.0)
     assert all(s <= 100 for s in stakes)
     assert sum(stakes) <= 1000
+
+
+def test_groups_isolate_unrelated_cities_from_crowding():
+    """A cheap, high-edge Yes leg in its own (station, date) group must not be
+    crushed just because many unrelated No legs (other cities/dates) are also
+    in the book. Without `groups`, the flat equicorrelation pools every leg
+    together — a cheap Yes bet has much higher implied sigma (scales ~1/price)
+    than the many expensive near-certain No bets, so the shared linear solve
+    drives it toward zero regardless of its own edge. Grouping by (station,
+    date) confines the covariance shrinkage to legs that share one real
+    weather realization."""
+    # Many No legs on unrelated (station, date) pairs, all high price / low
+    # implied variance, plus one isolated cheap Yes leg with a real edge.
+    no_legs = [(0.9, 0.7)] * 10          # p=0.9 win, price=0.7 -> edge=0.2
+    probs = [p for p, _ in no_legs] + [0.34]     # Yes leg: p=0.34
+    prices = [q for _, q in no_legs] + [0.135]   # priced at 0.135 -> edge~0.2
+    groups = [(f"CITY{i}", "2026-07-04") for i in range(10)] + [("CITYX", "2026-07-04")]
+
+    ungrouped = correlated_stakes(probs, prices, bankroll=113, rho=0.3)
+    grouped = correlated_stakes(probs, prices, bankroll=113, rho=0.3, groups=groups)
+
+    assert ungrouped[-1] < 1.0            # reproduces the historical bug
+    assert grouped[-1] > ungrouped[-1] * 3   # grouping meaningfully frees the Yes leg
+    assert grouped[-1] >= 1.5              # clears MIN_STAKE_PER_MARKET, i.e. actually tradable

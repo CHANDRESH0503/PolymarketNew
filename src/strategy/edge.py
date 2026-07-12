@@ -230,8 +230,9 @@ def _apply_portfolio_sizing(signals: list[Signal],
         return
     probs = [s.model_prob if s.side == "Yes" else 1.0 - s.model_prob for s in book]
     prices = [s.price for s in book]
+    groups = [(s.station, s.date) for s in book]
     investable = bankroll * (1.0 - CASH_BUFFER)
-    stakes = correlated_stakes(probs, prices, bankroll=investable)
+    stakes = correlated_stakes(probs, prices, bankroll=investable, groups=groups)
     for s, st in zip(book, stakes):
         s.stake = st
 

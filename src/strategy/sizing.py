@@ -50,12 +50,22 @@ def stake_usdc(p: float, price: float,
 # correlation in Σ shrinks the correlated legs — pure downside protection.
 
 def correlation_kelly(probs, prices, corr=None,
-                      rho: float = CORR_KELLY_RHO) -> np.ndarray:
+                      rho: float = CORR_KELLY_RHO, groups=None) -> np.ndarray:
     """Full-Kelly bankroll fractions for a set of simultaneous binary bets.
 
     `probs[i]`  = our win probability for buying leg i at `prices[i]`.
-    `corr`      = NxN correlation matrix of the legs' outcomes; if None, an
-                  equicorrelation matrix with off-diagonal `rho` is used.
+    `corr`      = NxN correlation matrix of the legs' outcomes; if None, a
+                  block-equicorrelation matrix is used: off-diagonal `rho`
+                  within a group, 0.0 across groups (see `groups`).
+    `groups`    = optional per-leg group key (e.g. (station, date)). Legs in
+                  different groups are genuinely different weather
+                  realizations (different city and/or different day) and
+                  should not be pooled at the same rho as legs that share
+                  one — otherwise a large book of unrelated cities/dates
+                  swamps the shared linear solve and starves any leg whose
+                  price (and thus implied variance 1/price) differs sharply
+                  from the majority, regardless of its own edge. None (the
+                  default) reproduces the old flat-rho-everywhere matrix.
     Returns f*[i] >= 0 (no shorting; negative/no-edge legs clamp to 0). Apply
     KELLY_FRACTION and per-market caps separately (see `correlated_stakes`)."""
     p = np.asarray(probs, dtype=float)
@@ -69,7 +79,11 @@ def correlation_kelly(probs, prices, corr=None,
     sigma = np.sqrt(np.clip(p * (1.0 - p), 0.0, None)) / q   # Bernoulli std, scaled
 
     if corr is None:
-        corr = np.full((n, n), float(rho))
+        if groups is not None:
+            same_group = np.array([[g1 == g2 for g2 in groups] for g1 in groups])
+            corr = np.where(same_group, float(rho), 0.0)
+        else:
+            corr = np.full((n, n), float(rho))
         np.fill_diagonal(corr, 1.0)
     else:
         corr = np.asarray(corr, dtype=float)
@@ -87,13 +101,24 @@ def correlated_stakes(probs, prices, corr=None,
                       bankroll: float = BANKROLL,
                       fraction: float = KELLY_FRACTION,
                       cap: float | None = None,
-                      rho: float = CORR_KELLY_RHO) -> list[float]:
+                      rho: float = CORR_KELLY_RHO,
+                      groups=None) -> list[float]:
     """USDC stakes for simultaneous correlated bets: fractional, covariance-shrunk
-    Kelly, with a total-bankroll guard and per-market cap."""
+    Kelly, with a total-bankroll guard and per-market cap. `groups` (see
+    `correlation_kelly`) confines the covariance shrinkage to legs that share
+    a real weather realization (same station+date) instead of pooling the
+    whole multi-city book at one rho."""
     if cap is None:
         cap = market_cap(bankroll)
-    f = correlation_kelly(probs, prices, corr, rho) * fraction
-    total = f.sum()
-    if total > 1.0:                        # never stake more than the bankroll
-        f = f / total
-    return [round(min(fi * bankroll, cap), 2) for fi in f]
+    f = correlation_kelly(probs, prices, corr, rho, groups=groups) * fraction
+    # Cap each leg in dollars BEFORE checking the total-bankroll guard. Legs
+    # that raw Kelly wants well over the per-market cap (common for a
+    # near-certain No bought cheap) don't actually consume that much of the
+    # bankroll once capped — normalizing on the *uncapped* fraction sum would
+    # overstate demand from those legs and needlessly shrink every other
+    # (unrelated) leg in the same book by the same factor.
+    dollars = np.clip(f * bankroll, 0.0, cap)
+    total = dollars.sum()
+    if total > bankroll:                   # never stake more than the bankroll
+        dollars = dollars * (bankroll / total)
+    return [round(d, 2) for d in dollars]
