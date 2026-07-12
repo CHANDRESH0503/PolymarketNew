@@ -17,10 +17,12 @@ import time
 
 from .config import (MIN_EDGE, DRY_RUN, ROOT, MIN_STAKE_PER_MARKET, BANKROLL,
                     PK, POLY_PROXY_ADDRESS, SIGNATURE_TYPE, CLOB_API,
-                    CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE)
+                    CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE,
+                    STATIONS, CALIBRATION, NOWCAST)
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
 from .polymarket.clob import place_order
 from .polymarket import data_api
+from .strategy import edge as edge_mod
 from .strategy.edge import generate_signals
 
 # Idempotency ledger of token_ids we have already sent a live order for. The
@@ -85,6 +87,53 @@ def _live_equity() -> float | None:
     return round(cash + pos_value, 2)
 
 
+def _cached_scorer():
+    """A `scorer_for(station, date)` that reuses the paper daemon's persisted
+    forecast cache (paper.db `forecast_cache`), which the co-located trader
+    refreshes every ~15 min.
+
+    Two reasons the live path must NOT fetch its own forecasts fresh every run:
+    (1) it double-hits Open-Meteo (paper already fetched the same distributions),
+    and (2) a transient 429 then drops *every* station from the run — exactly what
+    a fresh-fetch live run does, leaving live idle while paper keeps trading from
+    its cache. Reading paper's cache makes live see the same forecasts paper does.
+    Read-only on paper.db; falls back to a live fetch per (station, date) only when
+    the cache has no entry, and returns None (→ caller uses the default live
+    fetcher) when the paper DB isn't present at all."""
+    try:
+        from .paper import store as paper_store
+        from .forecast import dist_cache
+    except Exception:  # noqa: BLE001 — paper deps absent => default live fetch
+        return None
+    try:
+        con = paper_store.connect()
+    except Exception:  # noqa: BLE001 — no paper DB on this host
+        return None
+
+    def scorer_for(station: str, date: str):
+        s = STATIONS.get(station)
+        if not s:
+            return None
+        # Same-day + NOWCAST: fold in fresh obs with a live nowcast; on failure
+        # (e.g. 429) fall through to the cached ensemble rather than dropping it.
+        if NOWCAST and edge_mod._is_today(date, s["tz"]):
+            try:
+                from .forecast import nowcast as nowcast_mod
+                return nowcast_mod.build_nowcast(station, date)
+            except Exception:  # noqa: BLE001
+                pass
+        cached = paper_store.load_forecast_dist(con, station, date, "ensemble")
+        if cached:
+            return dist_cache.ensemble_from_payload(station, date, cached, CALIBRATION)
+        try:
+            return edge_mod._build_scorer(station, date)   # not cached: fetch live
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! forecast unavailable for {station} {date}: {e}")
+            return None
+
+    return scorer_for
+
+
 def run_once() -> None:
     print(f"\n=== scan @ {time.strftime('%Y-%m-%d %H:%M:%S')} "
           f"(DRY_RUN={DRY_RUN}, MIN_EDGE={MIN_EDGE}) ===")
@@ -96,7 +145,8 @@ def run_once() -> None:
     bankroll = eq if eq is not None else BANKROLL
     print(f"sizing bankroll = ${bankroll:.2f} "
           f"({'live wallet equity' if eq is not None else 'static BANKROLL'})")
-    signals = generate_signals(markets, bankroll=bankroll)
+    signals = generate_signals(markets, scorer_for=_cached_scorer(),
+                               bankroll=bankroll)
     print(f"\n{len(signals)} actionable signal(s):")
     for s in signals:
         print(" ", s)
