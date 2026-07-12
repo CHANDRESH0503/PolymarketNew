@@ -141,6 +141,22 @@ def run_once() -> None:
     markets = [m for ev in events for m in parse_event(ev)]
     print(f"discovered {len(events)} temperature events / {len(markets)} bucket markets")
 
+    # Exclude markets we've already bought BEFORE sizing. Correlation-Kelly sizes
+    # the whole book together (f* = Σ⁻¹μ) and concentrates the budget on the
+    # highest-edge legs; if those are ones we already hold, they keep winning the
+    # allocation while the un-held legs (e.g. a fresh resolution day's buckets) get
+    # shrunk below MIN_STAKE_PER_MARKET and are never placed — the live book
+    # freezes on its first fills. The paper engine dodges this only because it
+    # entered those legs on an earlier tick when they were top-ranked and un-held.
+    # Dropping already-placed markets here lets corr-Kelly's budget flow to the
+    # un-held opportunities, so live progressively deploys across ticks like paper.
+    placed = _load_placed()
+    n_before = len(markets)
+    markets = [m for m in markets
+               if m.yes_token_id not in placed and m.no_token_id not in placed]
+    print(f"{len(markets)} markets after excluding {n_before - len(markets)} "
+          f"already-held (sizing pool)")
+
     eq = _live_equity()
     bankroll = eq if eq is not None else BANKROLL
     print(f"sizing bankroll = ${bankroll:.2f} "
@@ -151,7 +167,6 @@ def run_once() -> None:
     for s in signals:
         print(" ", s)
 
-    placed = _load_placed()
     n_placed = n_small = 0
     for s in signals:
         if s.token_id in placed:
