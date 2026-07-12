@@ -18,9 +18,10 @@ import time
 from .config import (MIN_EDGE, DRY_RUN, ROOT, MIN_STAKE_PER_MARKET, BANKROLL,
                     PK, POLY_PROXY_ADDRESS, SIGNATURE_TYPE, CLOB_API,
                     CLOB_API_KEY, CLOB_API_SECRET, CLOB_API_PASSPHRASE,
-                    STATIONS, CALIBRATION, NOWCAST)
+                    STATIONS, CALIBRATION, NOWCAST,
+                    PIN_EXIT, EXIT_PIN_PRICE, MIN_ORDER_SHARES)
 from .polymarket.gamma import fetch_open_temperature_events, parse_event
-from .polymarket.clob import place_order
+from .polymarket.clob import place_order, sell_position, get_books, best_bid
 from .polymarket import data_api
 from .strategy import edge as edge_mod
 from .strategy.edge import generate_signals
@@ -46,6 +47,79 @@ def _record_placed(token_id: str) -> None:
     placed.add(token_id)
     _PLACED_PATH.parent.mkdir(parents=True, exist_ok=True)
     _PLACED_PATH.write_text(json.dumps(sorted(placed)))
+
+
+# Pin-exit ledger: token_ids we have already sent a SELL for, so a resting or
+# partially-filled exit isn't re-sent every scan. Mirrors the placed ledger.
+_EXITED_PATH = ROOT / "data" / "exited_tokens.json"
+
+
+def _load_exited() -> set[str]:
+    try:
+        return set(json.loads(_EXITED_PATH.read_text()))
+    except Exception:  # noqa: BLE001 — missing/corrupt ledger => start empty
+        return set()
+
+
+def _record_exited(token_id: str) -> None:
+    exited = _load_exited()
+    exited.add(token_id)
+    _EXITED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _EXITED_PATH.write_text(json.dumps(sorted(exited)))
+
+
+def harvest_pins() -> None:
+    """Recycle capital out of decided markets. A winning ticket held to
+    resolution stays frozen as conditional tokens (this bot has no on-chain
+    redemption), so the live wallet's tradable USDC only ever shrinks. Once a
+    held market pins — best bid >= EXIT_PIN_PRICE — the last cents of terminal
+    value are not worth a day of frozen capital: sell into the bid and let the
+    cash fund the next resolution day's entries. Runs before the buy scan so
+    the freed balance is available to the same tick's orders."""
+    if not (PIN_EXIT and POLY_PROXY_ADDRESS):
+        return
+    try:
+        positions = data_api.get_positions(POLY_PROXY_ADDRESS)
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! pin-exit: positions fetch failed: {e}")
+        return
+    exited = _load_exited()
+    candidates = []
+    for p in positions:
+        token = str(p.get("asset") or "")
+        size = float(p.get("size") or 0.0)
+        cur = float(p.get("curPrice") or 0.0)
+        # redeemable == already resolved: the CLOB book is closed, nothing to
+        # sell into. (Recovering those needs on-chain redemption, out of scope.)
+        if (not token or token in exited or p.get("redeemable")
+                or cur < EXIT_PIN_PRICE or size < MIN_ORDER_SHARES):
+            continue
+        candidates.append((token, size, str(p.get("title") or "")))
+    if not candidates:
+        return
+    try:
+        books = get_books([t for t, _, _ in candidates])
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! pin-exit: book fetch failed: {e}")
+        return
+    freed = 0.0
+    for token, size, title in candidates:
+        bid = best_bid(books.get(token))
+        if not bid or bid[0] < EXIT_PIN_PRICE:
+            continue          # marked at the pin but no real bid to sell into
+        try:
+            resp = sell_position(token, bid[0], size)
+        except Exception as e:  # noqa: BLE001 — one bad exit must not stop the rest
+            print(f"  ! pin-exit failed {token[:10]}…: {e}")
+            continue
+        if resp.get("skipped"):
+            continue
+        if not DRY_RUN:
+            _record_exited(token)
+        freed += size * bid[0]
+        print(f"  pin-exit SELL {size:.2f} @ {bid[0]:.3f} — {title[:60]}")
+    if freed:
+        print(f"pin-exit: ~${freed:.2f} recycled back to cash")
 
 
 def _live_equity() -> float | None:
@@ -137,6 +211,7 @@ def _cached_scorer():
 def run_once() -> None:
     print(f"\n=== scan @ {time.strftime('%Y-%m-%d %H:%M:%S')} "
           f"(DRY_RUN={DRY_RUN}, MIN_EDGE={MIN_EDGE}) ===")
+    harvest_pins()
     events = fetch_open_temperature_events()
     markets = [m for ev in events for m in parse_event(ev)]
     print(f"discovered {len(events)} temperature events / {len(markets)} bucket markets")

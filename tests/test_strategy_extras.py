@@ -76,6 +76,23 @@ def test_no_harvest_skips_when_model_not_confident(monkeypatch):
     assert sig is None or sig.sleeve != "no_harvest"
 
 
+# ---- tail-confidence gate on No entries -----------------------------------
+def test_no_entry_blocked_in_miscalibrated_midband():
+    # Model P(Yes) ≈ 0.24 for the bucket one degree above the mean: the No side
+    # shows a nominal edge (0.76 vs a 0.68 price) but the mid-band is where the
+    # model's calibration historically failed — the gate must reject it.
+    m = _market(deg=26, yes=0.30, no=0.68)
+    assert edge.evaluate_market(m, _forecast(mean=25.0)) is None
+
+
+def test_no_entry_allowed_in_tail():
+    # Far-tail bucket (P(Yes) ~ 0) with room in the No price: gate passes.
+    m = _market(deg=29, yes=0.10, no=0.85)
+    sig = edge.evaluate_market(m, _forecast(mean=25.0))
+    assert sig is not None and sig.side == "No"
+    assert sig.model_prob <= edge.MAX_PYES_FOR_NO
+
+
 # ---- US station regex -----------------------------------------------------
 def test_station_regex_handles_us_and_intl():
     assert _parse_station(

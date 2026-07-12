@@ -72,6 +72,23 @@ PAPER_DEPTH = _b("PAPER_DEPTH", "1")
 # updating every short tick. Default 600s = every 10 minutes.
 EQUITY_SNAPSHOT_INTERVAL = _f("EQUITY_SNAPSHOT_INTERVAL", 600)
 
+# Tail-confidence gate on forecast-lane No entries. The settled fill history
+# shows the model's mid-band is miscalibrated: No tickets entered with model
+# P(Yes) in ~(0.05, 0.12] won only ~40% of the time (the model predicted ~90%)
+# and were the book's concentrated losers, while entries at P(Yes) <= 0.03 won
+# 96%. Only sell a bucket short when the calibrated model is genuinely in the
+# tail. Set to 1.0 to disable the gate.
+MAX_PYES_FOR_NO = _f("MAX_PYES_FOR_NO", 0.05)
+
+# Pin-exit (cash recycling). The bot has no on-chain redemption path, so a
+# winning ticket held to resolution stays frozen as conditional tokens and its
+# USDC never returns to the tradable balance — the live wallet cash-starves in
+# days even while equity grows. Instead, once a held position's market pins
+# (best bid >= EXIT_PIN_PRICE), sell into the bid: gives up the last cent or
+# two of terminal value but recycles the capital into the next day's edge.
+PIN_EXIT = _b("PIN_EXIT", "1")
+EXIT_PIN_PRICE = _f("EXIT_PIN_PRICE", 0.98)
+
 # Tradability filters. Markets within a few hours of resolution are effectively
 # decided (prices pinned to 0.001/0.999, no liquidity), so forecast "edge" there
 # is fake. Only trade a sane price band and a minimum horizon.

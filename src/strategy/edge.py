@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 from ..config import (MIN_EDGE, STATIONS, MIN_PRICE, MAX_PRICE,
                       MIN_HOURS_TO_RESOLVE, CALIBRATION, NOWCAST,
                       CORR_KELLY, CASH_BUFFER, BANKROLL, MIN_RESOLVE_DATE,
-                      NO_HARVEST, NO_HARVEST_MAX_P, NO_HARVEST_STAKE)
+                      NO_HARVEST, NO_HARVEST_MAX_P, NO_HARVEST_STAKE,
+                      MAX_PYES_FOR_NO)
 from ..forecast.openmeteo import fetch_max_temp_distribution, MaxTempForecast
 from ..forecast.model import yes_probability, apply_calibration
 from ..forecast import nowcast as nowcast_mod
@@ -150,7 +151,13 @@ def evaluate_market(m: TempMarket, fc, min_edge: float = MIN_EDGE,
                               yes_edge,
                               stake_usdc(p_yes, m.yes_price, bankroll=bankroll),
                               **meta))
-    if no_edge > yes_edge and no_edge >= min_edge:
+    # Tail-confidence gate: a No entry needs the model genuinely in the tail
+    # (P(Yes) <= MAX_PYES_FOR_NO). The mid-band (~0.05-0.12) looks like edge on
+    # paper but is where the model's calibration is weakest — those tickets won
+    # ~40% against a predicted ~90% and were the settled book's concentrated
+    # losers. Disagreeing with the market there is betting on our worst band.
+    if (no_edge > yes_edge and no_edge >= min_edge
+            and p_yes <= MAX_PYES_FOR_NO):
         return _finish(Signal(m, "No", m.no_token_id, p_yes, m.no_price, no_edge,
                               stake_usdc(1.0 - p_yes, m.no_price, bankroll=bankroll),
                               **meta))

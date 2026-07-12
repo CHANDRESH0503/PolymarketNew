@@ -120,3 +120,60 @@ def test_portfolio_sizing_noop_when_off(monkeypatch):
     sigs = [Signal(None, "No", "t", 0.2, 0.2, 0.6, 42.0)]
     _apply_portfolio_sizing(sigs)
     assert sigs[0].stake == 42.0      # independent per-bet Kelly stands
+
+
+# ---- pin-exit (sell winners back to cash) ---------------------------------
+def test_sell_position_dry_run(monkeypatch):
+    from src.polymarket import clob
+    monkeypatch.setattr(clob, "DRY_RUN", True)
+    resp = clob.sell_position("tok", 0.985, 8.3875)
+    assert resp["dry_run"] and resp["side"] == "SELL"
+    assert resp["size"] == 8.38          # floored, never exceeds the balance
+
+
+def test_sell_position_skips_below_exchange_min(monkeypatch):
+    from src.polymarket import clob
+    monkeypatch.setattr(clob, "DRY_RUN", True)
+    resp = clob.sell_position("tok", 0.99, 3.0)
+    assert resp["skipped"] and resp["reason"] == "below_min_shares"
+
+
+def test_harvest_pins_sells_only_pinned_open_positions(monkeypatch, tmp_path):
+    from src import bot
+    monkeypatch.setattr(bot, "PIN_EXIT", True)
+    monkeypatch.setattr(bot, "POLY_PROXY_ADDRESS", "0xabc")
+    monkeypatch.setattr(bot, "DRY_RUN", False)
+    monkeypatch.setattr(bot, "_EXITED_PATH", tmp_path / "exited.json")
+    positions = [
+        {"asset": "pinned", "size": 6.0, "curPrice": 0.99, "redeemable": False, "title": "sell me"},
+        {"asset": "midair", "size": 6.0, "curPrice": 0.60, "redeemable": False, "title": "still open"},
+        {"asset": "closed", "size": 6.0, "curPrice": 1.00, "redeemable": True, "title": "book closed"},
+        {"asset": "tiny", "size": 3.0, "curPrice": 0.99, "redeemable": False, "title": "sub-min"},
+    ]
+    monkeypatch.setattr(bot.data_api, "get_positions", lambda w: positions)
+    monkeypatch.setattr(bot, "get_books", lambda toks: {
+        "pinned": {"bids": [{"price": "0.99", "size": "50"}], "asks": []}})
+    sold = []
+    monkeypatch.setattr(bot, "sell_position",
+                        lambda t, p, s: (sold.append((t, p, s)), {})[1])
+    bot.harvest_pins()
+    assert sold == [("pinned", 0.99, 6.0)]
+    bot.harvest_pins()                    # ledger makes the exit one-shot
+    assert len(sold) == 1
+
+
+def test_harvest_pins_needs_real_bid(monkeypatch, tmp_path):
+    # Marked at the pin but the book has no bid at/above the threshold: hold.
+    from src import bot
+    monkeypatch.setattr(bot, "PIN_EXIT", True)
+    monkeypatch.setattr(bot, "POLY_PROXY_ADDRESS", "0xabc")
+    monkeypatch.setattr(bot, "_EXITED_PATH", tmp_path / "exited.json")
+    monkeypatch.setattr(bot.data_api, "get_positions", lambda w: [
+        {"asset": "thin", "size": 6.0, "curPrice": 0.99, "redeemable": False, "title": "t"}])
+    monkeypatch.setattr(bot, "get_books", lambda toks: {
+        "thin": {"bids": [{"price": "0.90", "size": "50"}], "asks": []}})
+    sold = []
+    monkeypatch.setattr(bot, "sell_position",
+                        lambda t, p, s: (sold.append(t), {})[1])
+    bot.harvest_pins()
+    assert sold == []

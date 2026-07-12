@@ -114,12 +114,12 @@ def create_api_key() -> None:
     print(f"CLOB_API_PASSPHRASE={creds.api_passphrase}")
 
 
-def _post(client, token_id: str, price: float, shares: float):
-    """Create + post one BUY order via the v2 client, resolving the market's tick
+def _post(client, token_id: str, price: float, shares: float, side: str = "BUY"):
+    """Create + post one order via the v2 client, resolving the market's tick
     size and neg-risk flag first (weather buckets are neg-risk multi-outcome, so
     the order must be signed against the neg-risk exchange)."""
     from py_clob_client_v2.clob_types import OrderArgs, PartialCreateOrderOptions, OrderType
-    from py_clob_client_v2.order_builder.constants import BUY
+    from py_clob_client_v2.order_builder.constants import BUY, SELL
 
     # get_tick_size returns a TickSize (a string like "0.01"); pass it through
     # unchanged — the client's ROUNDING_CONFIG is keyed by that exact string, so
@@ -129,7 +129,8 @@ def _post(client, token_id: str, price: float, shares: float):
     px = _align_to_tick(price, float(tick))
     options = PartialCreateOrderOptions(tick_size=tick, neg_risk=neg_risk)
     return client.create_and_post_order(
-        OrderArgs(token_id=token_id, price=px, size=round(shares, 2), side=BUY),
+        OrderArgs(token_id=token_id, price=px, size=round(shares, 2),
+                  side=SELL if side == "SELL" else BUY),
         options=options, order_type=OrderType.GTC)
 
 
@@ -159,6 +160,29 @@ def place_order(token_id: str, side: str, price: float, size_usdc: float) -> dic
 
     resp = _post(_client(), token_id, price, shares)
     print(f"   [LIVE] order resp: {resp}")
+    return resp
+
+
+def sell_position(token_id: str, price: float, shares: float) -> dict:
+    """SELL `shares` of a held token at limit `price` (the pin-exit path: a
+    limit at/below the best bid crosses immediately; any unfilled remainder
+    rests GTC as a near-pin ask). DRY_RUN-guarded like place_order.
+
+    Shares are floored (not rounded) to 2 dp so the order can never exceed the
+    actual balance held."""
+    shares = int(shares * 100) / 100.0
+    if shares < MIN_ORDER_SHARES:
+        print(f"   [skip] sell below {MIN_ORDER_SHARES:.0f}-share exchange min "
+              f"for {token_id[:10]}… ({shares} shares)")
+        return {"skipped": True, "reason": "below_min_shares", "token_id": token_id}
+    order = {"token_id": token_id, "side": "SELL",
+             "price": round(price, 3), "size": shares}
+    if DRY_RUN or not PK:
+        print(f"   [DRY_RUN] would place {order}")
+        return {"dry_run": True, **order}
+
+    resp = _post(_client(), token_id, price, shares, side="SELL")
+    print(f"   [LIVE] sell resp: {resp}")
     return resp
 
 

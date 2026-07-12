@@ -222,6 +222,28 @@ The edge is real *only if the market is slow to reprice live obs* — `nowcast_s
 exists to test exactly that (the `NOW-MKT` gap). Off by default (`NOWCAST=0`):
 ensemble-only stays the safe baseline until the slowness is demonstrated.
 
+**Tail-confidence gate on No entries — ✅ built (`MAX_PYES_FOR_NO`)**
+
+The settled fill history exposed exactly where the model loses: No tickets
+entered with model P(Yes) in ~(0.05, 0.12] won only ~40% (predicted ~90%) and
+were the book's concentrated losers, while entries at P(Yes) ≤ 0.03 won 96%.
+`edge.evaluate_market` now requires calibrated P(Yes) ≤ `MAX_PYES_FOR_NO`
+(default 0.05) for a forecast-lane No entry — replayed on the 79 settled fills
+this lifts P&L from +$13.49 to +$20.70 (ROI 8.9% → 15.7%) by refusing the
+mid-band coin flips where disagreeing with the market is betting on our worst
+calibration band. Set to 1.0 to disable.
+
+**Pin-exit cash recycling — ✅ built (`bot.harvest_pins`, `PIN_EXIT`)**
+
+The live path had no exit at all: winners held to resolution freeze as
+unredeemed conditional tokens (there is no on-chain redemption in this bot), so
+the wallet's tradable USDC only ever shrinks — cash-starvation in days. Now each
+live scan first sells any held position whose market has pinned (best bid ≥
+`EXIT_PIN_PRICE`, default 0.98) into the bid via `clob.sell_position`, giving up
+the last cent or two of terminal value to recycle capital into the next day's
+entries. One-shot per token (`data/exited_tokens.json` ledger), skips resolved
+(book-closed) and sub-5-share positions, holds when the pin has no real bid.
+
 **Correlation-aware Kelly — ✅ built + wired (`sizing.correlation_kelly`)**
 
 Independent Kelly over-bets when one heat wave moves many cities together. The
